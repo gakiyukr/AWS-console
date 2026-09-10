@@ -21,8 +21,10 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "aws-console",
-      "database_id": "95917b87-defb-4175-a060-875dc58d8796",
+      // 遷移預覽專用獨立資料庫；正式切換前依 MIGRATION.md 另行審查，
+      // 不得直接改回正式 aws-console D1（id 95917b87-defb-4175-a060-875dc58d8796）。
+      "database_name": "aws-console-next-preview",
+      "database_id": "ad944e92-27a0-4642-a960-47127f76da5f",
       "migrations_dir": "../server/db/migrations"
     }
   ]

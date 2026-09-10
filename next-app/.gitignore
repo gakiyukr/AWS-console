@@ -40,3 +40,4 @@ yarn-error.log*
 # TypeScript 自動產生檔案
 *.tsbuildinfo
 next-env.d.ts
+.preview-secrets.tmp

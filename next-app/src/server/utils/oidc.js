@@ -52,7 +52,9 @@ function errorResolution(reason) {
 
 function isCredentialEncryptionKeyValid(value) {
   try {
-    return atob(String(value)).length === 32;
+    // 與 Nuxt 版差異：容忍尾端空白（wrangler secret put 由管線輸入時
+    // 可能附加換行），避免純輸入格式問題被誤判為金鑰無效。
+    return atob(String(value).trim()).length === 32;
   } catch {
     return false;
   }

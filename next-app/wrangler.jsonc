@@ -8,6 +8,12 @@
     "global_fetch_strictly_public"
   ],
   "keep_vars": true,
+  // opennextjs-cloudflare #1232：Workers 不支援 getMiddlewareManifest()
+  // 的動態 require；本專案不使用 Next middleware（守衛在 layout 實作），
+  // 以 minimal mode 跳過該路徑。
+  "vars": {
+    "NEXT_PRIVATE_MINIMAL_MODE": "1"
+  },
   "assets": {
     "binding": "ASSETS",
     "directory": ".open-next/assets"

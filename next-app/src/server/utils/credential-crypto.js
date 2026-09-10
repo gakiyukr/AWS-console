@@ -9,7 +9,9 @@ function bytesToBase64(bytes) {
 
 function base64ToBytes(value) {
   try {
-    const binary = atob(String(value || ""));
+    // 與 Nuxt 版差異：容忍尾端空白，避免管線輸入 secret 時附加的換行
+    // 導致解碼失敗。
+    const binary = atob(String(value || "").trim());
     return Uint8Array.from(binary, character => character.charCodeAt(0));
   } catch {
     throw new Error("憑證加密主金鑰格式無效");

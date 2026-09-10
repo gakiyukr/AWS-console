@@ -1,0 +1,42 @@
+# Git 忽略規則說明：https://help.github.com/articles/ignoring-files/
+
+# 依賴套件
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# 測試產物
+/coverage
+
+# Next.js 建置產物
+/.next/
+/.open-next/
+/out/
+
+# 正式建置產物
+/build
+
+# 其他本機檔案
+.DS_Store
+*.pem
+
+# 偵錯日誌
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# 環境變數檔案
+.env*
+
+# Vercel 本機資料
+.vercel
+
+# TypeScript 自動產生檔案
+*.tsbuildinfo
+next-env.d.ts

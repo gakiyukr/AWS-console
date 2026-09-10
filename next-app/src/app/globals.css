@@ -1,0 +1,27 @@
+@import "tailwindcss";
+@import "@heroui/react/styles";
+
+:root {
+  color-scheme: light;
+}
+
+@theme inline {
+  --font-sans: "Inter", "Noto Sans TC", "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+body {
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}

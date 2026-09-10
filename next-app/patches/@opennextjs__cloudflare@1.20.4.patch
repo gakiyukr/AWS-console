@@ -1,0 +1,13 @@
+diff --git a/dist/cli/build/bundle-server.js b/dist/cli/build/bundle-server.js
+index f59e677181f1d0007993e36e05901f1f012689f9..f5b78f31e87354e0d1f469db3bf924e2695b6674 100644
+--- a/dist/cli/build/bundle-server.js
++++ b/dist/cli/build/bundle-server.js
+@@ -124,6 +124,8 @@ export async function bundleServer(buildOpts, projectOpts) {
+             // `@next/env` is used by Next to load environment variables from files.
+             // OpenNext inlines the values at build time so this is not needed.
+             "@next/env": path.join(buildOpts.outputDir, "cloudflare-templates/shims/env.js"),
++            // Cloudflare adapter 已接管圖片請求，Worker 不得載入平台原生 sharp 模組。
++            sharp: path.join(buildOpts.outputDir, "cloudflare-templates/shims/throw.js"),
+         },
+         define: {
+             // config file used by Next.js, see: https://github.com/vercel/next.js/blob/68a7128/packages/next/src/build/utils.ts#L2137-L2139

@@ -1,0 +1,3 @@
+NEXTJS_ENV=development
+SESSION_SECRET=請填入至少三十二字元的本機測試密鑰
+CREDENTIAL_ENCRYPTION_KEY=請填入本機測試加密主金鑰

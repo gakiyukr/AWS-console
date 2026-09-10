@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aws-console-next-preview",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "keep_vars": true,
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".open-next/assets"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "aws-console-next-preview"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "aws-console",
+      "database_id": "95917b87-defb-4175-a060-875dc58d8796",
+      "migrations_dir": "../server/db/migrations"
+    }
+  ]
+}

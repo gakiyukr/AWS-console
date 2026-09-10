@@ -44,3 +44,9 @@ next-env.d.ts
 
 # 本機 Cloudflare 環境變數
 .dev.vars
+
+# /logs 頁面與 API 路由（與根 .gitignore 的 logs 規則無關，反向排除）
+!src/app/api/logs/
+!src/app/api/logs/**
+!src/app/(console)/logs/
+!src/app/(console)/logs/**

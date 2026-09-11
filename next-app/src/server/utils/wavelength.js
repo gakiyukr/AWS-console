@@ -94,6 +94,16 @@ const OS_OPTIONS = [
       arm64: "Rocky-9-EC2-Base-9.*aarch64*",
     },
   },
+  {
+    // Alpine 官方帳號；僅匹配 cloudinit 變體（tiny 版無 cloud-init，無法注入憑證）
+    value: "alpine3",
+    label: "Alpine Linux 3",
+    owners: ["538276064967"],
+    imageNameByArchitecture: {
+      x86_64: "alpine-3.*x86_64*cloudinit*",
+      arm64: "alpine-3.*aarch64*cloudinit*",
+    },
+  },
 ];
 
 const POLL_ATTEMPTS = 60;
@@ -678,7 +688,8 @@ ${keyLines}`,
         "chmod 700 /root/.ssh",
         "sed -i 's/^#*PermitRootLogin.*/PermitRootLogin without-password/' /etc/ssh/sshd_config",
         "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config",
-        "systemctl restart ssh || systemctl restart sshd",
+        // systemd 發行版用 systemctl；Alpine（OpenRC）用 rc-service
+        "systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || rc-service sshd restart",
       ],
     };
   }
@@ -698,7 +709,8 @@ chpasswd:
       "passwd -u root",
       "sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config",
       "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config",
-      "systemctl restart ssh || systemctl restart sshd",
+      // systemd 發行版用 systemctl；Alpine（OpenRC）用 rc-service
+      "systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || rc-service sshd restart",
     ],
   };
 }
@@ -729,6 +741,8 @@ ${preamble}
 
 runcmd:
 ${formatRuncmd(runcmd)}
+  # Alpine 預設無 iptables；apk 不存在時失敗亦不影響後續（|| true）
+  - apk add --no-cache iptables >/dev/null 2>&1 || true
   - sysctl -w net.ipv4.ip_forward=1
   - printf 'net.ipv4.ip_forward=1\\n' >/etc/sysctl.d/99-wavelength-forwarder.conf
   - iptables -t nat -A PREROUTING -p tcp --dport ${listenPort} -j DNAT --to-destination ${targetPrivateIp}:22

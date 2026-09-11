@@ -50,3 +50,5 @@ next-env.d.ts
 !src/app/api/logs/**
 !src/app/(console)/logs/
 !src/app/(console)/logs/**
+
+# 佈署前自動產生的 D1 種子檔.preview-seed.sql

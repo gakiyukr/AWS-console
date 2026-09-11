@@ -1,5 +1,27 @@
 # AWS 主控台
 
+主控台前端已遷移至 `next-app/`（Next.js 16 App Router + HeroUI 3），與根目錄的 Nuxt 舊版共用 `server/db/migrations` 與後端工具層；遷移契約見 `next-app/MIGRATION.md`。以下說明以 Next.js 版為準。
+
+## 部署方式
+
+正式環境由 Cloudflare Workers Builds（git 整合）自動部署：push 到 `main` 後以根目錄 `next-app` 執行：
+
+- 構建命令：`rm -rf .open-next .next && pnpm exec opennextjs-cloudflare build`
+  - **務必先刪除 `.open-next`**：Workers Builds 會還原上次的建置快取，在殘留產物上增量打包會產出執行時 Server Components 500 的壞 bundle。
+- 部署命令：`npx wrangler deploy`
+- 根目錄：`next-app`
+
+本機部署同一份設定：
+
+```bash
+cd next-app
+pnpm install
+pnpm exec opennextjs-cloudflare build   # 執行前先停用 next dev 並確認無 workerd 殘留，否則產出壞 bundle
+pnpm exec wrangler deploy
+```
+
+部署目標（Worker 名稱、正式 D1、service binding）定義在 `next-app/wrangler.jsonc`；同名部署會保留 Worker secrets（`SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY`），正式資料原樣沿用。
+
 此專案整合 `aws-wavelength-console` 與 `ec2-power-console` 的核心能力，部署為單一 Cloudflare Worker：
 
 - 以 OIDC SSO（Authorization Code + PKCE）登入，僅允許清單內的 email 進入主控台。

@@ -672,13 +672,13 @@ export default function WavelengthPage() {
       </Card>
 
       <Card>
-        <Card.Content className="grid gap-4 p-6 md:grid-cols-[auto_1fr] md:items-end">
+        <Card.Content className="grid gap-4 p-6">
           <div>
             <h3 className="text-base font-semibold">既有 Wavelength EC2</h3>
             <p className="text-sm text-muted">為指定 VPC 與 Zone 內的既有執行個體建立區域型 SSH forwarder</p>
           </div>
-          <div className="grid gap-4 md:grid-cols-[auto_1fr] md:items-end">
-            <label htmlFor="existing-forwarder" className="flex h-9 items-center gap-2 text-sm">
+          <div className="grid gap-4">
+            <label htmlFor="existing-forwarder" className="flex h-5 items-center gap-2 text-sm">
               <input
                 id="existing-forwarder"
                 type="checkbox"
@@ -706,7 +706,7 @@ export default function WavelengthPage() {
                 ))}
               </select>
             </div>
-            <div className="md:col-span-2">
+            <div>
               <Button variant="secondary" isDisabled={!canDeployExistingForwarder || isBusy} onPress={deployExistingForwarder}>
                 {busyAction === "forwarder" ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
                 部署既有 WL forwarder

@@ -64,6 +64,36 @@ const OS_OPTIONS = [
       arm64: "*ubuntu-noble-24.04-arm64-server-*",
     },
   },
+  {
+    // AWS 官方帳號的 Amazon Linux 2023
+    value: "al2023",
+    label: "Amazon Linux 2023",
+    owners: ["137112412989"],
+    imageNameByArchitecture: {
+      x86_64: "al2023-ami-2023.*-kernel-*-x86_64",
+      arm64: "al2023-ami-2023.*-kernel-*-arm64",
+    },
+  },
+  {
+    // AlmaLinux 官方帳號
+    value: "alma9",
+    label: "AlmaLinux 9",
+    owners: ["763139002136"],
+    imageNameByArchitecture: {
+      x86_64: "AlmaLinux OS 9.* x86_64*",
+      arm64: "AlmaLinux OS 9.* aarch64*",
+    },
+  },
+  {
+    // Rocky Linux 官方帳號
+    value: "rocky9",
+    label: "Rocky Linux 9",
+    owners: ["792107900819"],
+    imageNameByArchitecture: {
+      x86_64: "Rocky-9-EC2-Base-9.*x86_64*",
+      arm64: "Rocky-9-EC2-Base-9.*aarch64*",
+    },
+  },
 ];
 
 const POLL_ATTEMPTS = 60;

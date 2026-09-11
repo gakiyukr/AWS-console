@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "aws-console-next-preview",
+  "name": "aws-console",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-08-31",
   "compatibility_flags": [
@@ -21,16 +21,17 @@
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
-      "service": "aws-console-next-preview"
+      "service": "aws-console"
     }
   ],
   "d1_databases": [
     {
       "binding": "DB",
-      // 遷移預覽專用獨立資料庫；正式切換前依 MIGRATION.md 另行審查，
-      // 不得直接改回正式 aws-console D1（id 95917b87-defb-4175-a060-875dc58d8796）。
-      "database_name": "aws-console-next-preview",
-      "database_id": "ad944e92-27a0-4642-a960-47127f76da5f",
+      // 正式資料庫：與 Nuxt 版共用同一份 migrations，資料原樣沿用；
+      // Worker 上的 secrets（CREDENTIAL_ENCRYPTION_KEY、SESSION_SECRET）
+      // 在同名部署時保留，加密資料可直接解密。
+      "database_name": "aws-console",
+      "database_id": "95917b87-defb-4175-a060-875dc58d8796",
       "migrations_dir": "../server/db/migrations"
     }
   ]

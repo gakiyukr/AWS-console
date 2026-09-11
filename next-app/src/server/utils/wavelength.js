@@ -45,6 +45,25 @@ const OS_OPTIONS = [
       arm64: "debian-13-arm64-*",
     },
   },
+  {
+    // Canonical 官方帳號；名稱前綴隨世代不同（hvm-ssd / hvm-ssd-gp-3），以萬用字元涵蓋
+    value: "ubuntu22",
+    label: "Ubuntu 22.04 LTS",
+    owners: ["099720109477"],
+    imageNameByArchitecture: {
+      x86_64: "*ubuntu-jammy-22.04-amd64-server-*",
+      arm64: "*ubuntu-jammy-22.04-arm64-server-*",
+    },
+  },
+  {
+    value: "ubuntu24",
+    label: "Ubuntu 24.04 LTS",
+    owners: ["099720109477"],
+    imageNameByArchitecture: {
+      x86_64: "*ubuntu-noble-24.04-amd64-server-*",
+      arm64: "*ubuntu-noble-24.04-arm64-server-*",
+    },
+  },
 ];
 
 const POLL_ATTEMPTS = 60;

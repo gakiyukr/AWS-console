@@ -8,7 +8,7 @@ import { toast } from "@heroui/react/toast";
 import { Badge } from "@heroui/react/badge";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
-import { Table } from "@heroui/react/table";
+import { Table } from "@/components/table-lazy";
 
 interface OperationLog {
   id: number

@@ -11,7 +11,7 @@ import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
 import { Modal } from "@heroui/react/modal";
-import { Table } from "@heroui/react/table";
+import { Table } from "@/components/table-lazy";
 import { regionLabel } from "@/lib/regions";
 
 // 機器列資料結構：D1 清單 × DescribeInstances 即時狀態合併後的結果

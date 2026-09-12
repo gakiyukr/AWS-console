@@ -8,6 +8,11 @@
     "global_fetch_strictly_public"
   ],
   "keep_vars": true,
+  // 開啟 Workers Logs：instrumentation.ts 的 onRequestError 會把被遮蔽的
+  // RSC 錯誤（digest/stack）寫入 console，可在 Dashboard 觀測。
+  "observability": {
+    "enabled": true
+  },
   // opennextjs-cloudflare #1232：Workers 不支援 getMiddlewareManifest()
   // 的動態 require；本專案不使用 Next middleware（守衛在 layout 實作），
   // 以 minimal mode 跳過該路徑。

@@ -1,14 +1,10 @@
-# Nuxt dev/build outputs
-.output
-.data
-.nuxt
-.nitro
-.cache
-dist
-.wrangler
-
 # Node dependencies
 node_modules
+
+# Local build/dev state
+.wrangler
+.next
+.open-next
 
 # Logs
 logs
@@ -27,5 +23,3 @@ logs
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
-
-.dev.vars*

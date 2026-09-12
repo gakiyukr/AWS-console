@@ -9,6 +9,7 @@ import { Badge } from "@heroui/react/badge";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Table } from "@/components/table-lazy";
+import { NoSsr } from "@/components/no-ssr";
 
 interface OperationLog {
   id: number
@@ -199,6 +200,7 @@ export default function LogsPage() {
             <div className="py-12 text-center text-sm text-muted">沒有符合條件的操作日誌</div>
           ) : (
             <div className="overflow-x-auto">
+              <NoSsr>
               <Table.Root>
                 <Table.ScrollContainer>
                   <Table.Content aria-label="操作日誌">
@@ -245,6 +247,7 @@ export default function LogsPage() {
                   </Table.Content>
                 </Table.ScrollContainer>
               </Table.Root>
+              </NoSsr>
             </div>
           )}
         </Card.Content>

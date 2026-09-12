@@ -12,6 +12,7 @@ import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
 import { Modal } from "@heroui/react/modal";
 import { Table } from "@/components/table-lazy";
+import { NoSsr } from "@/components/no-ssr";
 import { regionLabel } from "@/lib/regions";
 
 // 機器列資料結構：D1 清單 × DescribeInstances 即時狀態合併後的結果
@@ -355,6 +356,7 @@ export default function MachinesPage() {
           ) : machines.length === 0 ? (
             <p className="py-12 text-center text-muted">清單中還沒有機器。</p>
           ) : (
+            <NoSsr>
             <Table.Root>
               <Table.ScrollContainer>
                 <Table.Content aria-label="機器清單">
@@ -466,6 +468,7 @@ export default function MachinesPage() {
                 </Table.Content>
               </Table.ScrollContainer>
             </Table.Root>
+            </NoSsr>
           )}
         </Card.Content>
       </Card>

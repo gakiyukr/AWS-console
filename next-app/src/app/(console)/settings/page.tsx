@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "@heroui/react/toast";
-import { Badge } from "@heroui/react/badge";
+import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
@@ -172,7 +172,7 @@ export default function SettingsPage() {
                       <h4 className="text-base font-semibold">{key.label}</h4>
                       <p className="truncate font-mono text-xs text-muted">{key.publicKey}</p>
                     </div>
-                    <Badge variant="secondary">{sshKeyTypeLabel(key.publicKey)}</Badge>
+                    <Chip variant="secondary">{sshKeyTypeLabel(key.publicKey)}</Chip>
                   </div>
                   <div className="flex flex-col gap-1 text-xs text-muted">
                     {keyComment(key.publicKey) ? <span>備註：{keyComment(key.publicKey)}</span> : null}

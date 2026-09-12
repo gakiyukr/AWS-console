@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Globe, KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "@heroui/react/toast";
-import { Badge } from "@heroui/react/badge";
+import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
@@ -275,10 +275,10 @@ export default function AccountsPage() {
                       <p className="text-sm text-muted">Access Key ····{account.accessKeyHint}</p>
                     </div>
                     <div className="flex gap-1">
-                      {account.isDefault ? <Badge>預設</Badge> : null}
-                      <Badge variant={account.enabled ? "secondary" : "soft"}>
+                      {account.isDefault ? <Chip variant="default">預設</Chip> : null}
+                      <Chip variant={account.enabled ? "secondary" : "soft"}>
                         {account.enabled ? "啟用" : "停用"}
-                      </Badge>
+                      </Chip>
                     </div>
                   </div>
                   <p className="text-xs text-muted">
@@ -316,7 +316,7 @@ export default function AccountsPage() {
 
       {/* 新增／編輯帳號 */}
       <Modal.Root isOpen={accountOpen} onOpenChange={setAccountOpen}>
-        <Modal.Backdrop />
+        <Modal.Backdrop>
         <Modal.Container size="md">
           <Modal.Dialog>
             <Modal.Header>
@@ -402,11 +402,12 @@ export default function AccountsPage() {
             </Modal.Footer>
           </Modal.Dialog>
         </Modal.Container>
+        </Modal.Backdrop>
       </Modal.Root>
 
       {/* 開通區域 */}
       <Modal.Root isOpen={regionOpen} onOpenChange={setRegionOpen}>
-        <Modal.Backdrop />
+        <Modal.Backdrop>
         <Modal.Container size="md">
           <Modal.Dialog>
             <Modal.Header>
@@ -427,7 +428,7 @@ export default function AccountsPage() {
                     {activeRegions.map(r => (
                       <div key={r.region} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
                         <span className="text-sm">{regionLabel(r.region)}</span>
-                        <Badge variant="secondary">{regionStatusLabel(r.optInStatus)}</Badge>
+                        <Chip variant="secondary">{regionStatusLabel(r.optInStatus)}</Chip>
                       </div>
                     ))}
                     {activeRegions.length === 0 ? (
@@ -464,6 +465,7 @@ export default function AccountsPage() {
             </Modal.Footer>
           </Modal.Dialog>
         </Modal.Container>
+        </Modal.Backdrop>
       </Modal.Root>
     </div>
   );

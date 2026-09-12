@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, Plus, RefreshCw } from "lucide-react";
 import { toast } from "@heroui/react/toast";
-import { Badge } from "@heroui/react/badge";
+import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
@@ -376,7 +376,7 @@ export default function MachinesPage() {
                           <div className="flex items-center gap-2">
                             <span className="font-medium">{machine.name}</span>
                             {machine.isWavelength ? (
-                              <Badge variant="secondary" size="sm">WL</Badge>
+                              <Chip variant="secondary" size="sm">WL</Chip>
                             ) : null}
                           </div>
                           <div className="font-mono text-xs text-muted">{machine.instanceId}</div>
@@ -388,9 +388,9 @@ export default function MachinesPage() {
                           <span className="text-xs">{machine.awsAccountName || "未關聯"}</span>
                         </Table.Cell>
                         <Table.Cell>
-                          <Badge variant={stateBadgeVariant(machine.state)} size="sm">
+                          <Chip variant={stateBadgeVariant(machine.state)} size="sm">
                             {stateLabel(machine.state)}
-                          </Badge>
+                          </Chip>
                         </Table.Cell>
                         <Table.Cell>
                           {machine.publicIpAddress ? (
@@ -475,7 +475,7 @@ export default function MachinesPage() {
 
       {/* 新增機器 */}
       <Modal.Root isOpen={addOpen} onOpenChange={setAddOpen}>
-        <Modal.Backdrop />
+        <Modal.Backdrop>
         <Modal.Container size="md">
           <Modal.Dialog>
             <Modal.Header>
@@ -576,11 +576,12 @@ export default function MachinesPage() {
             </Modal.Footer>
           </Modal.Dialog>
         </Modal.Container>
+        </Modal.Backdrop>
       </Modal.Root>
 
       {/* 確認關閉 */}
       <Modal.Root isOpen={stopOpen} onOpenChange={setStopOpen}>
-        <Modal.Backdrop />
+        <Modal.Backdrop>
         <Modal.Container size="sm" placement="center">
           <Modal.Dialog>
             <Modal.Header>
@@ -595,11 +596,12 @@ export default function MachinesPage() {
             </Modal.Footer>
           </Modal.Dialog>
         </Modal.Container>
+        </Modal.Backdrop>
       </Modal.Root>
 
       {/* 確認移除 */}
       <Modal.Root isOpen={removeOpen} onOpenChange={setRemoveOpen}>
-        <Modal.Backdrop />
+        <Modal.Backdrop>
         <Modal.Container size="sm" placement="center">
           <Modal.Dialog>
             <Modal.Header>
@@ -617,6 +619,7 @@ export default function MachinesPage() {
             </Modal.Footer>
           </Modal.Dialog>
         </Modal.Container>
+        </Modal.Backdrop>
       </Modal.Root>
     </div>
   );

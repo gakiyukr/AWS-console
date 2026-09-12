@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "@heroui/react/toast";
-import { Badge } from "@heroui/react/badge";
+import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Table } from "@/components/table-lazy";
@@ -232,9 +232,9 @@ export default function LogsPage() {
                             <div className="font-mono text-xs text-muted">{entry.instanceId || "—"}</div>
                           </Table.Cell>
                           <Table.Cell>
-                            <Badge variant={entry.status === "success" ? "primary" : "soft"} size="sm">
+                            <Chip variant={entry.status === "success" ? "primary" : "soft"} size="sm">
                               {entry.status === "success" ? "成功" : "失敗"}
-                            </Badge>
+                            </Chip>
                           </Table.Cell>
                           <Table.Cell>
                             <pre className="max-h-48 max-w-2xl overflow-auto whitespace-pre-wrap break-all text-xs">

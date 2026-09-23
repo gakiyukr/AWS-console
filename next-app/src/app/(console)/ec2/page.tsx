@@ -9,6 +9,7 @@ import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
 import { regionLabel } from "@/lib/regions";
+import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
 
 interface SelectOption {
@@ -47,60 +48,6 @@ const STAGE_LABELS: Record<string, string> = {
 
 function toastDanger(message: string) {
   toast(message, { variant: "danger" });
-}
-
-// 讀取部署 SSE 串流：progress 事件進入進度列，result／error 為終態
-async function readEventStream(
-  response: Response,
-  appendProgress: (message: string, details?: Record<string, unknown>) => void,
-): Promise<Record<string, unknown>> {
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({})) as { error?: string };
-    throw new Error(payload.error || `請求失敗（HTTP ${response.status}）`);
-  }
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("部署事件串流不可用");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finalResult: Record<string, unknown> | null = null;
-  let finalError = "";
-
-  function processBlock(block: string) {
-    const lines = block.split("\n");
-    const eventName = lines.find(line => line.startsWith("event: "))?.slice(7) || "message";
-    const dataText = lines.filter(line => line.startsWith("data: ")).map(line => line.slice(6)).join("\n") || "{}";
-    const payload = JSON.parse(dataText) as Record<string, unknown> & { stage?: string; error?: string; message?: string };
-    if (eventName === "progress") {
-      appendProgress(STAGE_LABELS[payload.stage ?? ""] || payload.stage || "部署進度", payload);
-    } else if (eventName === "result") {
-      finalResult = payload;
-    } else if (eventName === "error") {
-      finalError = payload.error || payload.message || "部署失敗";
-    }
-  }
-
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replaceAll("\r\n", "\n");
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary !== -1) {
-      processBlock(buffer.slice(0, boundary));
-      buffer = buffer.slice(boundary + 2);
-      boundary = buffer.indexOf("\n\n");
-    }
-    if (done) break;
-  }
-  if (buffer.trim()) processBlock(buffer);
-  if (finalError) throw new Error(finalError);
-  // 後端正常結束必發出 result 或 error；兩者皆無代表連線中途斷開，
-  // 此時不可當成部署成功，否則會顯示綠色成功與空結果。
-  if (!finalResult) {
-    throw new Error("部署連線中斷，未收到最終結果；請至操作日誌確認實際狀態。");
-  }
-  return finalResult;
 }
 
 export default function Ec2Page() {
@@ -273,7 +220,10 @@ export default function Ec2Page() {
           ...credentialPayload(),
         }),
       });
-      const finalResult = await readEventStream(response, appendProgress);
+      const finalResult = await readDeploymentStream(response, {
+        onProgress: appendProgress,
+        stageLabels: STAGE_LABELS,
+      });
       setResult(finalResult);
       appendProgress("一般 EC2 部署流程完成", finalResult);
       toast.success("一般 EC2 部署流程完成");

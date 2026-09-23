@@ -13,6 +13,7 @@ import { Input } from "@heroui/react/input";
 import { Modal } from "@heroui/react/modal";
 import { Table } from "@/components/table-lazy";
 import { NoSsr } from "@/components/no-ssr";
+import { readError, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 
 // 機器列資料結構：D1 清單 × DescribeInstances 即時狀態合併後的結果
@@ -71,18 +72,7 @@ function stateBadgeVariant(state: string | null) {
   return "soft" as const;
 }
 
-async function readError(response: Response): Promise<string> {
-  try {
-    const body = await response.json();
-    return typeof body?.error === "string" ? body.error : "操作失敗";
-  } catch {
-    return "操作失敗";
-  }
-}
 
-function toastDanger(message: string) {
-  toast(message, { variant: "danger" });
-}
 
 export default function MachinesPage() {
   const [machines, setMachines] = useState<MachineRow[]>([]);

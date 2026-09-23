@@ -8,6 +8,7 @@ import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
+import { readError, toastDanger } from "@/lib/api-client";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
 
 // 尾段自由文字（email、主機名等）作為備註顯示
@@ -23,18 +24,7 @@ function formatCreatedAt(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-TW");
 }
 
-function toastDanger(message: string) {
-  toast(message, { variant: "danger" });
-}
 
-async function readError(response: Response): Promise<string> {
-  try {
-    const body = await response.json();
-    return typeof body?.error === "string" ? body.error : "操作失敗";
-  } catch {
-    return "操作失敗";
-  }
-}
 
 export default function SettingsPage() {
   const [keys, setKeys] = useState<SshPublicKeyOption[]>([]);

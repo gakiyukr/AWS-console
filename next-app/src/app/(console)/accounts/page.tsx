@@ -10,6 +10,7 @@ import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
 import { Modal } from "@heroui/react/modal";
+import { readError, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 
 interface AwsAccount {
@@ -43,18 +44,7 @@ function isRegionActive(status: string) {
   return status !== "not-opted-in";
 }
 
-function toastDanger(message: string) {
-  toast(message, { variant: "danger" });
-}
 
-async function readError(response: Response): Promise<string> {
-  try {
-    const body = await response.json();
-    return typeof body?.error === "string" ? body.error : "操作失敗";
-  } catch {
-    return "操作失敗";
-  }
-}
 
 const EMPTY_FORM = {
   name: "",

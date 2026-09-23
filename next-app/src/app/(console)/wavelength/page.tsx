@@ -9,6 +9,7 @@ import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
+import { readError, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
@@ -71,18 +72,7 @@ const STAGE_LABELS: Record<string, string> = {
   forwarder_cloud_init_complete: "forwarder cloud-init 已完成",
 };
 
-function toastDanger(message: string) {
-  toast(message, { variant: "danger" });
-}
 
-async function readError(response: Response): Promise<string> {
-  try {
-    const body = await response.json();
-    return typeof body?.error === "string" ? body.error : "操作失敗";
-  } catch {
-    return "操作失敗";
-  }
-}
 
 const EMPTY_FORM = {
   accountId: null as number | null,

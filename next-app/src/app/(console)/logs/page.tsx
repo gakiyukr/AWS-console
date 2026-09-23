@@ -4,12 +4,12 @@
 // 支援帳號／操作／結果／筆數篩選，可下載 JSON。
 import { useEffect, useState } from "react";
 import { Download, Loader2, RefreshCw } from "lucide-react";
-import { toast } from "@heroui/react/toast";
 import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Table } from "@/components/table-lazy";
 import { NoSsr } from "@/components/no-ssr";
+import { toastDanger } from "@/lib/api-client";
 
 interface OperationLog {
   id: number
@@ -41,9 +41,6 @@ const ACTION_LABELS: Record<string, string> = {
   enable_region: "開通 Region",
 };
 
-function toastDanger(message: string) {
-  toast(message, { variant: "danger" });
-}
 
 // D1 datetime('now') 為 UTC 且無時區標記，補成 ISO 格式再轉本地時間；
 // 直接 new Date() 會把「YYYY-MM-DD HH:MM:SS」當本地時間（UTC+8 少 8 小時），

@@ -694,3 +694,6 @@ export default function MachinesPage() {
         </Modal.Container>
         </Modal.Backdrop>
       </Modal.Root>
+    </div>
+  );
+}

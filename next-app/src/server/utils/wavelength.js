@@ -1,3 +1,15 @@
+// EC2 部署與資源探索的業務邏輯層。
+//
+// 檔案名稱容易誤導：本模組同時服務兩條部署路徑，並非只處理 Wavelength。
+//   - Wavelength：deployWavelengthInstance、initializeWavelengthZone、
+//     deployForwarderForExistingWavelengthInstance，以及 Carrier Gateway、
+//     Wavelength Zone opt-in 等邊緣運算專屬資源。
+//   - 一般區域 EC2：deployRegionalEc2Instance、listEc2Regions。
+//   兩者共用資源確保（ensure*）、輪詢（waitFor*）、憑證與 cloud-init 產生。
+//
+// 因此 /api/ec2/* 與 /api/accounts/[id]/regions* 也會匯入本模組；純粹的
+// XML 解析已獨立至 ec2-xml.js，SigV4 簽章在 aws-query.js，D1 存取在 db.js，
+// HTTP 錯誤映射在 http.js。
 import { AwsRequestError, ec2Query, encodeUserData } from "./aws-query.js";
 import {
   compareInstanceTypesBySize,
@@ -1771,29 +1783,4 @@ export async function initializeWavelengthZone(env, input) {
   } catch (error) {
     throw mapAwsError(error);
   }
-}
-
-export function toHttpError(error) {
-  if (error instanceof WavelengthError) {
-    return {
-      status: error.statusCode,
-      body: {
-        error: error.message,
-      },
-    };
-  }
-
-  if (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 600) {
-    return {
-      status: error.statusCode,
-      body: { error: error.message || "請求失敗" },
-    };
-  }
-
-  return {
-    status: 500,
-    body: {
-      error: "伺服器內部錯誤",
-    },
-  };
 }

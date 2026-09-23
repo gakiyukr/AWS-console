@@ -23,6 +23,27 @@ export function errorResponse(status, message) {
 }
 
 /**
+ * 把帶有 statusCode 的業務錯誤映射為 `{ status, body: { error } }`，
+ * 供路由層轉成 HTTP 回應。以 statusCode 屬性判定而非 instanceof，
+ * 因此不依賴特定錯誤類別；無 statusCode 者一律視為 500 並隱藏細節。
+ * @param {unknown} error
+ * @returns {{ status: number, body: { error: string } }}
+ */
+export function toHttpError(error) {
+  if (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 600) {
+    return {
+      status: error.statusCode,
+      body: { error: error.message || "請求失敗" },
+    };
+  }
+
+  return {
+    status: 500,
+    body: { error: "伺服器內部錯誤" },
+  };
+}
+
+/**
  * 同時讀取 Workers Headers 與 Nitro Node 型標頭物件。
  * Cloudflare Worker 預設使用 Headers，但 Nitro 路由的 event.node.req.headers
  * 是小寫鍵名的普通物件；統一在此轉換可避免認證流程依執行期而失效。

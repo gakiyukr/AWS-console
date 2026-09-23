@@ -1,9 +1,8 @@
 // GET /api/ec2/instances：列出所選 AWS 帳號與 Region 內的全部 EC2 執行個體，
 // 供「新增機器」挑選既有執行個體，取代手動輸入執行個體 ID。
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
-import { errorResponse, jsonResponse } from "@/server/utils/http.js";
+import { errorResponse, jsonResponse, toHttpError } from "@/server/utils/http.js";
 import { listRegionInstances } from "@/server/utils/power.js";
-import { toHttpError } from "@/server/utils/wavelength.js";
 import { validateInput } from "@/server/utils/validate.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";

@@ -1,9 +1,9 @@
 // GET /api/wavelength/instances?region=…&zone=…&vpc_id=…：
 // 列出指定 VPC 內既有的 Wavelength 執行個體（供 forwarder 流程選擇目標）。
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
-import { errorResponse, jsonResponse } from "@/server/utils/http.js";
+import { errorResponse, jsonResponse, toHttpError } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
-import { listExistingWavelengthInstances, toHttpError } from "@/server/utils/wavelength.js";
+import { listExistingWavelengthInstances } from "@/server/utils/wavelength.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 

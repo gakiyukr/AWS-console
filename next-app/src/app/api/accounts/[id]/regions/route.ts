@@ -3,6 +3,7 @@
 // 未開通的 opt-in 區域也會一併回傳（optInStatus=not-opted-in）。
 import { resolveAwsAccount, toAwsAccountHttpError } from "@/server/utils/aws-account.js";
 import { jsonResponse } from "@/server/utils/http.js";
+// 注意：Region opt-in 狀態查詢與 Wavelength 共用同一模組。
 import { listAccountRegions } from "@/server/utils/wavelength.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";

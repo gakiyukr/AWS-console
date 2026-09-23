@@ -1,8 +1,8 @@
 // GET /api/ec2/vpcs：列出一般 EC2 部署 Region 內的 VPC。
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
-import { errorResponse, jsonResponse } from "@/server/utils/http.js";
+import { errorResponse, jsonResponse, toHttpError } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
-import { listVpcOptions, toHttpError } from "@/server/utils/wavelength.js";
+import { listVpcOptions } from "@/server/utils/wavelength.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 

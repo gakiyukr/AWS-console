@@ -4,9 +4,9 @@
 // 成功後寫入操作日誌（action: init_zone）。
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { appendOperationLog } from "@/server/utils/db.js";
-import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
+import { errorResponse, jsonResponse, readJsonBody, toHttpError } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
-import { initializeWavelengthZone, toHttpError } from "@/server/utils/wavelength.js";
+import { initializeWavelengthZone } from "@/server/utils/wavelength.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 

@@ -1,7 +1,7 @@
 // GET /api/wavelength/regions：列出已啟用且設有 Wavelength Zone 的地區。
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
-import { jsonResponse } from "@/server/utils/http.js";
-import { listWavelengthRegions, toHttpError } from "@/server/utils/wavelength.js";
+import { jsonResponse, toHttpError } from "@/server/utils/http.js";
+import { listWavelengthRegions } from "@/server/utils/wavelength.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 

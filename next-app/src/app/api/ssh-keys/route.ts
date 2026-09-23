@@ -4,6 +4,7 @@
 import { createSshPublicKey, listSshPublicKeys } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
+// 注意：SSH 公鑰驗證由部署模組提供（四條部署流程共用）。
 import { validateSshPublicKeyText } from "@/server/utils/wavelength.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";

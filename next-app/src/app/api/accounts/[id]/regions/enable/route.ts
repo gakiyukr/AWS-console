@@ -3,9 +3,9 @@
 // 操作日誌（action=enable_region）供 /logs 頁稽核；日誌寫入失敗不影響回應。
 import { resolveAwsAccount, toAwsAccountHttpError } from "@/server/utils/aws-account.js";
 import { appendOperationLog } from "@/server/utils/db.js";
-import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
+import { errorResponse, jsonResponse, readJsonBody, toHttpError } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
-import { enableAwsRegion, toHttpError } from "@/server/utils/wavelength.js";
+import { enableAwsRegion } from "@/server/utils/wavelength.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 

@@ -1,7 +1,8 @@
 // GET /api/ec2/regions：列出所選 AWS 帳號已啟用的全部 Region。
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
-import { jsonResponse } from "@/server/utils/http.js";
-import { listEc2Regions, toHttpError } from "@/server/utils/wavelength.js";
+import { jsonResponse, toHttpError } from "@/server/utils/http.js";
+// 注意：Region 探索與 Wavelength 共用同一模組，非 Wavelength 專屬。
+import { listEc2Regions } from "@/server/utils/wavelength.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 

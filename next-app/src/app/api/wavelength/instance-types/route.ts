@@ -1,9 +1,9 @@
 // GET /api/wavelength/instance-types?region=…&zone=…：
 // 列出該 Zone 內可用的執行個體類型（依價位排序）。
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
-import { errorResponse, jsonResponse } from "@/server/utils/http.js";
+import { errorResponse, jsonResponse, toHttpError } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
-import { listWavelengthInstanceTypes, toHttpError } from "@/server/utils/wavelength.js";
+import { listWavelengthInstanceTypes } from "@/server/utils/wavelength.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 

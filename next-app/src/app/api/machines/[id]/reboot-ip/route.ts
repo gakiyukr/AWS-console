@@ -1,11 +1,40 @@
-// POST /api/machines/:id/reboot-ip：連續執行 stop + start 來更換公網 IP。
+// POST /api/machines/:id/reboot-ip：連續執行 stop → 輪詢等待停止 → start，
+// 藉 Stop/Start 釋放並重新分配公網 IP（RebootInstances 不會換 IP）。
+import { errorResponse, jsonResponse } from "@/server/utils/http.js";
 import { appendOperationLog, getMachineById } from "@/server/utils/db.js";
-import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
+import { ec2Query } from "@/server/utils/aws-query.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 
+// 請求大小上限：本端點不接受任何 body 欄位
 const MAX_BODY_BYTES = 10240;
+
+// 輪詢等待執行個體進入 stopped：StopInstances 通常 20–60 秒，
+// 以 3 秒間隔最多 30 次（90 秒）覆蓋常見情境，避免過早 StartInstances 失敗。
+const STOP_POLL_INTERVAL_MS = 3_000;
+const STOP_POLL_MAX_ATTEMPTS = 30;
+
+function delay(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+}
+
+async function waitForInstanceStopped(region: string, awsEnv: Parameters<typeof ec2Query>[1], instanceId: string): Promise<boolean> {
+  for (let attempt = 0; attempt < STOP_POLL_MAX_ATTEMPTS; attempt += 1) {
+    await delay(STOP_POLL_INTERVAL_MS);
+    const xml = await ec2Query(region, awsEnv, "DescribeInstances", {
+      "InstanceId.1": instanceId,
+    });
+    // 執行個體已終止或查無回應時視為未停止，繼續輪詢由逾時收尾
+    const stateMatch = xml.match(/<instanceState>\s*<name>([^<]+)<\/name>/);
+    if (stateMatch?.[1] === "stopped") {
+      return true;
+    }
+  }
+  return false;
+}
 
 export async function POST(
   request: Request,
@@ -19,11 +48,6 @@ export async function POST(
     return errorResponse(413, "請求內容過大。");
   }
 
-  const body = await readJsonBody(request);
-  if (!body || typeof body !== "object") {
-    return errorResponse(400, "請求內容無效。");
-  }
-
   const { id: rawId } = await params;
   const id = Number(rawId);
   const machine = Number.isInteger(id) && id > 0 ? await getMachineById(env.DB, id) : null;
@@ -34,41 +58,19 @@ export async function POST(
   try {
     const { awsEnv } = await resolveAwsAccount(env, machine.awsAccountId);
 
-    // Step 1: Stop the instance
-    await ec2Query(
-      machine.region,
-      awsEnv,
-      "StopInstances",
-      { "InstanceId.1": machine.instanceId },
-    );
+    await ec2Query(machine.region, awsEnv, "StopInstances", {
+      "InstanceId.1": machine.instanceId,
+    });
 
-    // Step 2: Wait for stopped state (polling)
-    let attempts = 0;
-    const maxAttempts = 10;
-    while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      const describeXml = await ec2Query(
-        machine.region,
-        awsEnv,
-        "DescribeInstanceStatus",
-        { "InstanceId.1": machine.instanceId },
-      );
-      const statusMatch = describeXml.match(/<instanceState>\s*<name>([^<]+)<\/name>/);
-      if (statusMatch && statusMatch[1] === "stopped") {
-        break;
-      }
-      attempts++;
+    const stopped = await waitForInstanceStopped(machine.region, awsEnv, machine.instanceId);
+    if (!stopped) {
+      throw new Error("執行個體未在時限內進入 stopped 狀態，已中止更換 IP；請稍後手動啟動。");
     }
 
-    // Step 3: Start the instance
-    await ec2Query(
-      machine.region,
-      awsEnv,
-      "StartInstances",
-      { "InstanceId.1": machine.instanceId },
-    );
+    await ec2Query(machine.region, awsEnv, "StartInstances", {
+      "InstanceId.1": machine.instanceId,
+    });
 
-    // Record logs
     await appendOperationLog(env.DB, {
       action: "reboot-ip",
       region: machine.region,
@@ -80,23 +82,21 @@ export async function POST(
 
     return jsonResponse({
       ok: true,
-      message: "已送出停止→啟動請求（將更換公網 IP）。",
+      message: "已停止並重新啟動，公網 IP 將更換。",
     });
   } catch (error) {
-    await appendOperationLog(env.DB, {
-      action: "reboot-ip",
-      region: machine.region,
-      instanceId: machine.instanceId,
-      status: "failure",
-      detail: error instanceof Error ? error.message : String(error),
-      awsAccountId: machine.awsAccountId,
-    });
-    return errorResponse(500, "操作失敗。");
+    try {
+      await appendOperationLog(env.DB, {
+        action: "reboot-ip",
+        region: machine.region,
+        instanceId: machine.instanceId,
+        status: "failure",
+        detail: error instanceof Error ? error.message : String(error),
+        awsAccountId: machine.awsAccountId,
+      });
+    } catch {
+      // 日誌寫入失敗不影響錯誤回應
+    }
+    return errorResponse(500, error instanceof Error ? error.message : "操作失敗。");
   }
-}
-
-// Import ec2Query dynamically to avoid circular dependency
-async function ec2Query(region: string, env: unknown, action: string, params: Record<string, string>) {
-  const { ec2Query } = await import("@/server/utils/aws-query.js");
-  return ec2Query(region, env as any, action, params);
 }

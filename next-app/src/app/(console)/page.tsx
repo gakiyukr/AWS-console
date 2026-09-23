@@ -325,6 +325,25 @@ export default function MachinesPage() {
       toastDanger(error instanceof Error ? error.message : "更換 IP 失敗");
     }
   }
+  async function submitRemove() {
+    const target = removeTarget;
+    if (!target || removing) return;
+    setRemoving(true);
+    try {
+      const response = await fetch(`/api/machines/${target.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error(await readError(response));
+      }
+      toast.success("機器已從清單移除");
+      setRemoveOpen(false);
+      setRemoveTarget(null);
+      await loadMachines();
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "移除失敗");
+    } finally {
+      setRemoving(false);
+    }
+  }
 
   async function copyText(text: string) {
     await navigator.clipboard.writeText(text);
@@ -468,6 +487,14 @@ export default function MachinesPage() {
                                   onPress={() => requestReboot(machine)}
                                 >
                                   重啟
+                                </Button>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  isDisabled={actionPendingId === machine.id}
+                                  onPress={() => requestRebootIp(machine)}
+                                >
+                                  更換 IP
                                 </Button>
                                 <Button
                                   variant="secondary"

@@ -287,7 +287,6 @@ export default function WavelengthPage() {
       setLoadingRegion(false);
     }
   }
-
   async function loadInstanceTypes(zone: string) {
     setInstanceTypes([]);
     updateForm({ instanceType: "" });
@@ -302,36 +301,22 @@ export default function WavelengthPage() {
       const payload = await response.json();
       const types: string[] = payload.instance_types || [];
       setInstanceTypes(types);
-      updateForm({ instanceType: types[0] || "" });
+      // Wavelength Zone 可能沒有 Instance Type Offering，但部署仍可進行
+      // 允許使用者手動指定常見機型（t3.nano, t3.small, t3.medium 等）
+      if (types.length === 0) {
+        console.warn(`Wavelength Zone ${zone} 沒有 Instance Type Offering，將顯示常用選項`);
+        setInstanceTypes(["t3.nano", "t3.small", "t3.medium"]);
+        updateForm({ instanceType: "t3.nano" });
+        toast.info("Wavelength Zone 尚未提供 Instance Type 列表，已預設 t3.nano");
+      } else {
+        updateForm({ instanceType: types[0] || "" });
+      }
     } catch {
       toastDanger("載入執行個體類型失敗");
     } finally {
       setLoadingTypes(false);
     }
   }
-
-  async function loadExistingInstances() {
-    setExistingInstances([]);
-    updateForm({ existingInstanceId: "" });
-    if (!form.useExistingInstance || !form.region || !form.zone || !form.vpcId) return;
-
-    setLoadingInstances(true);
-    try {
-      const response = await fetch(
-        `/api/wavelength/instances?account_id=${form.accountId}&region=${encodeURIComponent(form.region)}&zone=${encodeURIComponent(form.zone)}&vpc_id=${encodeURIComponent(form.vpcId)}`,
-      );
-      if (!response.ok) throw new Error("載入既有 Wavelength 執行個體失敗");
-      const payload = await response.json();
-      const instances: ExistingInstance[] = payload.instances || [];
-      setExistingInstances(instances);
-      updateForm({ existingInstanceId: instances[0]?.instance_id || "" });
-    } catch {
-      toastDanger("載入既有 Wavelength 執行個體失敗");
-    } finally {
-      setLoadingInstances(false);
-    }
-  }
-
   function selectZone(zone: string) {
     updateForm({ zone });
     void loadInstanceTypes(zone).then(() => loadExistingInstances());
@@ -570,7 +555,22 @@ export default function WavelengthPage() {
                 {instanceTypes.map(type => (
                   <option key={type} value={type}>{type}</option>
                 ))}
+                {!loadingTypes && instanceTypes.length > 0 && (
+                  <optgroup label="常見 Wavelength 機型（當 API 無法載入時可選）">
+                    <option value="t3.nano">t3.nano</option>
+                    <option value="t3.small">t3.small</option>
+                    <option value="t3.medium">t3.medium</option>
+                    <option value="t3.large">t3.large</option>
+                  </optgroup>
+                )}
               </select>
+              <p className="text-xs text-muted">
+                {loadingTypes
+                  ? "查詢 AWS 可用執行個體類型..."
+                  : instanceTypes.length === 0
+                    ? "API 未回報可用機型；請使用上方常見選項或手動輸入 t3.nano"
+                    : `該 Zone 可用機型：${instanceTypes.join(", ")}`}
+              </p>
             </div>
             <div className="grid content-start gap-2">
               <label htmlFor="wl-os" className="text-sm font-medium">作業系統</label>

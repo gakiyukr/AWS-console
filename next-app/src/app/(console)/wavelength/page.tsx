@@ -338,8 +338,15 @@ export default function WavelengthPage() {
       setLoadingInstances(false);
     }
   }
+  function selectZone(zone: string) {
+    updateForm({ zone });
+    void loadInstanceTypes(zone).then(() => loadExistingInstances());
+  }
 
-  // JSON POST 動作（初始化 Zone）
+  function toggleUseExistingInstance(checked: boolean) {
+    updateForm({ useExistingInstance: checked });
+    if (checked) void loadExistingInstances();
+  }
   async function runJsonAction(action: string, endpoint: string, payload: Record<string, unknown>, success: string) {
     setBusyAction(action);
     setResult(null);

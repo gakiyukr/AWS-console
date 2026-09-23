@@ -268,6 +268,8 @@ export default function MachinesPage() {
   const [stopOpen, setStopOpen] = useState(false);
   const [rebootTarget, setRebootTarget] = useState<MachineRow | null>(null);
   const [rebootOpen, setRebootOpen] = useState(false);
+  const [rebootIpTarget, setRebootIpTarget] = useState<MachineRow | null>(null);
+  const [rebootIpOpen, setRebootIpOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<MachineRow | null>(null);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -286,19 +288,6 @@ export default function MachinesPage() {
     setRebootOpen(true);
   }
 
-  async function confirmReboot() {
-    const machine = rebootTarget;
-    setRebootOpen(false);
-    setRebootTarget(null);
-    if (machine) await performAction(machine, "reboot");
-  }
-
-  async function confirmStop() {
-    const machine = stopTarget;
-    setStopOpen(false);
-    setStopTarget(null);
-  }
-
   async function submitRemove() {
     const target = removeTarget;
     if (!target || removing) return;
@@ -308,7 +297,6 @@ export default function MachinesPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      toast.success("機器已從清單移除");
       setRemoveOpen(false);
       setRemoveTarget(null);
       await loadMachines();
@@ -316,6 +304,26 @@ export default function MachinesPage() {
       toastDanger(error instanceof Error ? error.message : "移除失敗");
     } finally {
       setRemoving(false);
+    }
+  }
+
+  function requestRebootIp(machine: MachineRow) {
+    setRebootIpTarget(machine);
+    setRebootIpOpen(true);
+  }
+
+  async function confirmRebootIp() {
+    const machine = rebootIpTarget;
+    setRebootIpOpen(false);
+    setRebootIpTarget(null);
+    if (!machine) return;
+    try {
+      const response = await fetch(`/api/machines/${machine.id}/reboot-ip`, { method: "POST" });
+      if (!response.ok) throw new Error(await readError(response));
+      toast.success("已送出停止→啟動請求（將更換公網 IP）。");
+      await loadMachines();
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "更換 IP 失敗");
     }
   }
 
@@ -640,6 +648,31 @@ export default function MachinesPage() {
         </Modal.Container>
         </Modal.Backdrop>
       </Modal.Root>
+
+      {/* 確認更換 IP（停止→啟動） */}
+      <Modal.Root isOpen={rebootIpOpen} onOpenChange={setRebootIpOpen}>
+        <Modal.Backdrop>
+        <Modal.Container size="sm" placement="center">
+          <Modal.Dialog>
+            <Modal.Header>
+              <Modal.Heading>確認更換公網 IP</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body>
+              確定要更換「{rebootIpTarget?.name}」的公網 IP 嗎？此操作將：<br />
+              • 暫時關閉執行個體（中斷 SSH 連線）<br />
+              • 自動啟動執行個體<br />
+              • 分配新的公網 IP/DNS
+            </Modal.Body>
+            <Modal.Footer>
+              <Button variant="secondary" onPress={() => setRebootIpOpen(false)}>取消</Button>
+              <Button onPress={confirmRebootIp}>更換 IP</Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
+
+      {/* 確認移除 */}
       <Modal.Root isOpen={removeOpen} onOpenChange={setRemoveOpen}>
         <Modal.Backdrop>
         <Modal.Container size="sm" placement="center">
@@ -661,6 +694,3 @@ export default function MachinesPage() {
         </Modal.Container>
         </Modal.Backdrop>
       </Modal.Root>
-    </div>
-  );
-}

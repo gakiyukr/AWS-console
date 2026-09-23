@@ -317,15 +317,20 @@ export default function WavelengthPage() {
       setLoadingTypes(false);
     }
   }
-  async function loadExistingInstances() {
+  // 覆蓋參數解決 React 閉包過期狀態：勾選 checkbox 或切換 Zone 時，
+  // setState 尚未生效，閉包內的 form.useExistingInstance / form.zone 仍是舊值，
+  // 直接讀取會在守衛處短路而不發出請求。
+  async function loadExistingInstances(overrides?: { useExisting?: boolean; zone?: string }) {
+    const useExisting = overrides?.useExisting ?? form.useExistingInstance;
+    const zone = overrides?.zone ?? form.zone;
     setExistingInstances([]);
     updateForm({ existingInstanceId: "" });
-    if (!form.useExistingInstance || !form.region || !form.zone || !form.vpcId) return;
+    if (!useExisting || !form.region || !zone || !form.vpcId) return;
 
     setLoadingInstances(true);
     try {
       const response = await fetch(
-        `/api/wavelength/instances?account_id=${form.accountId}&region=${encodeURIComponent(form.region)}&zone=${encodeURIComponent(form.zone)}&vpc_id=${encodeURIComponent(form.vpcId)}`,
+        `/api/wavelength/instances?account_id=${form.accountId}&region=${encodeURIComponent(form.region)}&zone=${encodeURIComponent(zone)}&vpc_id=${encodeURIComponent(form.vpcId)}`,
       );
       if (!response.ok) throw new Error("載入既有 Wavelength 執行個體失敗");
       const payload = await response.json();
@@ -338,14 +343,15 @@ export default function WavelengthPage() {
       setLoadingInstances(false);
     }
   }
+
   function selectZone(zone: string) {
     updateForm({ zone });
-    void loadInstanceTypes(zone).then(() => loadExistingInstances());
+    void loadInstanceTypes(zone).then(() => loadExistingInstances({ zone }));
   }
 
   function toggleUseExistingInstance(checked: boolean) {
     updateForm({ useExistingInstance: checked });
-    if (checked) void loadExistingInstances();
+    if (checked) void loadExistingInstances({ useExisting: true });
   }
   async function runJsonAction(action: string, endpoint: string, payload: Record<string, unknown>, success: string) {
     setBusyAction(action);

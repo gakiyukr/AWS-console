@@ -1,25 +1,10 @@
+import { base64ToBytes, bytesToBase64 } from "./bytes.js";
+
 const KEY_VERSION = 1;
 const AAD = new TextEncoder().encode(`aws-console-credentials:v${KEY_VERSION}`);
 
-function bytesToBase64(bytes) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-function base64ToBytes(value) {
-  try {
-    // 與 Nuxt 版差異：容忍尾端空白，避免管線輸入 secret 時附加的換行
-    // 導致解碼失敗。
-    const binary = atob(String(value || "").trim());
-    return Uint8Array.from(binary, character => character.charCodeAt(0));
-  } catch {
-    throw new Error("憑證加密主金鑰格式無效");
-  }
-}
-
 async function importEncryptionKey(base64Key) {
-  const keyBytes = base64ToBytes(base64Key);
+  const keyBytes = base64ToBytes(base64Key, "憑證加密主金鑰格式無效");
   if (keyBytes.byteLength !== 32) {
     throw new Error("CREDENTIAL_ENCRYPTION_KEY 必須是 32 位元組的 Base64 值");
   }
@@ -77,23 +62,19 @@ export async function decryptAwsCredentials(account, base64Key) {
   }
 }
 
-export function generateCredentialEncryptionKey() {
-  return bytesToBase64(crypto.getRandomValues(new Uint8Array(32)));
-}
+// OIDC client secret 使用獨立 AAD 網域，與 AWS 憑證密文隔離；
+// 正式設定與 pending 暫存各一組，避免密文跨用途重放。
+const OIDC_SECRET_AAD = `aws-console-oidc-secret:v${KEY_VERSION}`;
+const PENDING_OIDC_SECRET_AAD = `aws-console-pending-oidc-secret:v${KEY_VERSION}`;
 
-// OIDC client secret 使用獨立 AAD 網域，與 AWS 憑證密文隔離
-const OIDC_SECRET_AAD = new TextEncoder().encode(`aws-console-oidc-secret:v${KEY_VERSION}`);
-const PENDING_OIDC_SECRET_AAD = new TextEncoder().encode(`aws-console-pending-oidc-secret:v${KEY_VERSION}`);
-
-/** 將 OIDC client secret 加密為可寫入 D1 的欄位；回傳值不包含明文。 */
-export async function encryptOidcClientSecret(secret, base64Key) {
+async function encryptSecretValue(secret, base64Key, aadDomain, requiredMessage) {
   if (typeof secret !== "string" || !secret) {
-    throw new Error("client secret 為必填");
+    throw new Error(requiredMessage);
   }
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await importEncryptionKey(base64Key);
   const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, additionalData: OIDC_SECRET_AAD, tagLength: 128 },
+    { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(aadDomain), tagLength: 128 },
     key,
     new TextEncoder().encode(secret),
   );
@@ -101,66 +82,55 @@ export async function encryptOidcClientSecret(secret, base64Key) {
     clientSecretCiphertext: bytesToBase64(new Uint8Array(encrypted)),
     clientSecretIv: bytesToBase64(iv),
   };
+}
+
+async function decryptSecretValue(record, base64Key, aadDomain, failureMessage) {
+  try {
+    const key = await importEncryptionKey(base64Key);
+    const decrypted = await crypto.subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: base64ToBytes(record.clientSecretIv),
+        additionalData: new TextEncoder().encode(aadDomain),
+        tagLength: 128,
+      },
+      key,
+      base64ToBytes(record.clientSecretCiphertext),
+    );
+    return new TextDecoder().decode(decrypted);
+  } catch (error) {
+    if (String(error?.message || "").includes("CREDENTIAL_ENCRYPTION_KEY"))
+      throw error;
+    throw new Error(failureMessage);
+  }
+}
+
+/** 將 OIDC client secret 加密為可寫入 D1 的欄位；回傳值不包含明文。 */
+export function encryptOidcClientSecret(secret, base64Key) {
+  return encryptSecretValue(secret, base64Key, OIDC_SECRET_AAD, "client secret 為必填");
 }
 
 /** 解密 D1 內的 OIDC client secret；只有伺服器端登入流程可使用。 */
-export async function decryptOidcClientSecret(record, base64Key) {
-  try {
-    const key = await importEncryptionKey(base64Key);
-    const decrypted = await crypto.subtle.decrypt(
-      {
-        name: "AES-GCM",
-        iv: base64ToBytes(record.clientSecretIv),
-        additionalData: OIDC_SECRET_AAD,
-        tagLength: 128,
-      },
-      key,
-      base64ToBytes(record.clientSecretCiphertext),
-    );
-    return new TextDecoder().decode(decrypted);
-  } catch (error) {
-    if (String(error?.message || "").includes("CREDENTIAL_ENCRYPTION_KEY"))
-      throw error;
-    throw new Error("OIDC client secret 解密失敗，請確認加密主金鑰未被更換");
-  }
+export function decryptOidcClientSecret(record, base64Key) {
+  return decryptSecretValue(
+    record,
+    base64Key,
+    OIDC_SECRET_AAD,
+    "OIDC client secret 解密失敗，請確認加密主金鑰未被更換",
+  );
 }
 
 /** 將尚未完成驗證的 OIDC Client Secret 加密，供 pending_sso_setup 使用。 */
-export async function encryptPendingOidcClientSecret(secret, base64Key) {
-  if (typeof secret !== "string" || !secret) {
-    throw new Error("Client Secret 必須填寫");
-  }
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await importEncryptionKey(base64Key);
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, additionalData: PENDING_OIDC_SECRET_AAD, tagLength: 128 },
-    key,
-    new TextEncoder().encode(secret),
-  );
-  return {
-    clientSecretCiphertext: bytesToBase64(new Uint8Array(encrypted)),
-    clientSecretIv: bytesToBase64(iv),
-  };
+export function encryptPendingOidcClientSecret(secret, base64Key) {
+  return encryptSecretValue(secret, base64Key, PENDING_OIDC_SECRET_AAD, "Client Secret 必須填寫");
 }
 
 /** 解密 pending_sso_setup 中的 OIDC Client Secret。 */
-export async function decryptPendingOidcClientSecret(record, base64Key) {
-  try {
-    const key = await importEncryptionKey(base64Key);
-    const decrypted = await crypto.subtle.decrypt(
-      {
-        name: "AES-GCM",
-        iv: base64ToBytes(record.clientSecretIv),
-        additionalData: PENDING_OIDC_SECRET_AAD,
-        tagLength: 128,
-      },
-      key,
-      base64ToBytes(record.clientSecretCiphertext),
-    );
-    return new TextDecoder().decode(decrypted);
-  } catch (error) {
-    if (String(error?.message || "").includes("CREDENTIAL_ENCRYPTION_KEY"))
-      throw error;
-    throw new Error("暫存 OIDC Client Secret 解密失敗，請確認加密主金鑰未被更換");
-  }
+export function decryptPendingOidcClientSecret(record, base64Key) {
+  return decryptSecretValue(
+    record,
+    base64Key,
+    PENDING_OIDC_SECRET_AAD,
+    "暫存 OIDC Client Secret 解密失敗，請確認加密主金鑰未被更換",
+  );
 }

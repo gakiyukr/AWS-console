@@ -1,7 +1,6 @@
 // OIDC SSO 登入流程：協議細節（discovery、PKCE、授權碼交換、ID token
-// 簽章與 claims 驗證）交由 oauth4webapi（純 Web Crypto，Workers 與
-// node --test 相容），本模組只負責組合流程、email 允許清單比對、
-// OOBE 初始設定的輸入正規化與測試用的 fetch 注入（env.__testHooks.fetch）。
+// 簽章與 claims 驗證）交由 oauth4webapi（純 Web Crypto，Workers 相容），
+// 本模組只負責組合流程、email 允許清單比對與 OOBE 初始設定的輸入正規化。
 import * as oauth from "oauth4webapi";
 import { OidcConfigurationError } from "../lib/oidc-configuration-error.js";
 import { OidcError } from "../lib/oidc-error.js";
@@ -214,7 +213,7 @@ export function clearSsoConfigCache() {
  * 讀取並驗證環境變數的 OIDC 設定；缺任一必填項回 null。
  * （OOBE 設定存於 D1，環境變數為替代/備援管道。）
  */
-export function getOidcConfig(env) {
+function getOidcConfig(env) {
   const issuer = env?.OIDC_ISSUER;
   const clientId = env?.OIDC_CLIENT_ID;
   const clientSecret = env?.OIDC_CLIENT_SECRET;
@@ -236,11 +235,6 @@ export function getOidcConfig(env) {
     tokenEndpoint: env?.OIDC_TOKEN_URL || "",
     jwksUri: env?.OIDC_JWKS_URL || "",
   };
-}
-
-/** 部署環境是否完成 OIDC 設定（middleware 與登入路由共用）。 */
-export async function isOidcConfigured(env) {
-  return (await resolveOidcConfig(env)) !== null;
 }
 
 /** session 內 email 是否在允許清單中。 */
@@ -339,8 +333,7 @@ export async function startLogin(env, redirectUri, setupInput = null) {
       throw new OidcError("configuration", 503);
     }
   }
-  const fetchImpl = env.__testHooks?.fetch || fetch;
-  const as = await resolveAuthorizationServer(config, fetchImpl);
+  const as = await resolveAuthorizationServer(config, fetch);
 
   let setupId = null;
   if (pendingEmail) {
@@ -461,11 +454,10 @@ export async function completeLogin(env, redirectUri, query, stateValue) {
     }
   }
 
-  const fetchImpl = env.__testHooks?.fetch || fetch;
   // startLogin 已解析過 metadata，此處通常命中快取
   let as;
   try {
-    as = await resolveAuthorizationServer(config, fetchImpl);
+    as = await resolveAuthorizationServer(config, fetch);
   } catch {
     throw new OidcError("configuration", 503);
   }
@@ -495,17 +487,17 @@ export async function completeLogin(env, redirectUri, query, stateValue) {
       params,
       redirectUri,
       stored.verifier,
-      { [oauth.customFetch]: fetchImpl },
+      { [oauth.customFetch]: fetch },
     );
     tokens = await oauth.processAuthorizationCodeResponse(as, client, response, {
       expectedNonce: stored.nonce,
       requireIdToken: true,
-      [oauth.customFetch]: fetchImpl,
+      [oauth.customFetch]: fetch,
     });
     // oauth4webapi 依 OIDC 規範視「TLS 即身分驗證」，token 回應中的
     // ID token 簽章不在此預設檢查；本主控台以 JWKS 額外驗章。
     await oauth.validateApplicationLevelSignature(as, response, {
-      [oauth.customFetch]: fetchImpl,
+      [oauth.customFetch]: fetch,
       [oauth.jwksCache]: jwksCache,
     });
   } catch {

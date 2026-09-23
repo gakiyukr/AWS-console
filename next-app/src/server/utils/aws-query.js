@@ -1,12 +1,5 @@
 import { AwsRequestError } from "../lib/aws-request-error.js";
-
-function bytesToBase64(bytes) {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
-}
+import { textToBase64 } from "./bytes.js";
 
 function bytesToHex(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -69,7 +62,7 @@ function parseAwsError(xml) {
 
 export { AwsRequestError };
 
-export function buildEc2Endpoint(region) {
+function buildEc2Endpoint(region) {
   return `https://ec2.${region}.amazonaws.com/`;
 }
 
@@ -127,7 +120,6 @@ export async function ec2Query(region, env, action, params = {}) {
     `AWS4-HMAC-SHA256 Credential=${env.AWS_ACCESS_KEY_ID}/${credentialScope}, ` +
     `SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
-  const fetchImpl = env.__testHooks?.fetch || fetch;
   // AWS API 偶發無回應時，fetch 可能無限期掛住並拖垮整個請求；
   // 以 30 秒逾時確保上層輪詢與 SSE 進度串流能持續推進。
   const headers = {
@@ -137,7 +129,7 @@ export async function ec2Query(region, env, action, params = {}) {
   };
   if (sessionToken)
     headers["x-amz-security-token"] = sessionToken;
-  const response = await fetchImpl(endpoint, {
+  const response = await fetch(endpoint, {
     method,
     headers,
     body,
@@ -160,5 +152,5 @@ export async function ec2Query(region, env, action, params = {}) {
 }
 
 export function encodeUserData(text) {
-  return bytesToBase64(new TextEncoder().encode(text));
+  return textToBase64(text);
 }

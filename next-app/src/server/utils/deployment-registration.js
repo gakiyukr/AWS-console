@@ -16,7 +16,7 @@ function addCandidate(candidates, instanceId, isWavelength) {
  * 依部署結果找出應納入電源管理清單的執行個體。
  * forwarder 流程同時保留目標 Wavelength 執行個體與新建立的區域型 forwarder。
  */
-export function collectDeploymentMachines(deploymentType, result) {
+function collectDeploymentMachines(deploymentType, result) {
   const candidates = [];
 
   switch (deploymentType) {

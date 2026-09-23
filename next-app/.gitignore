@@ -1,55 +1,9 @@
-# Git 忽略規則說明：https://help.github.com/articles/ignoring-files/
-
-# 依賴套件
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# 測試產物
-/coverage
-
-# Next.js 建置產物
-/.next/
-/.open-next/
-/out/
-
-# 正式建置產物
-/build
-
-# 其他本機檔案
-.DS_Store
-*.pem
-
-# 偵錯日誌
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# 環境變數檔案
-.env*
-
-# Vercel 本機資料
-.vercel
+# 依賴與建置產物已由根 .gitignore 涵蓋（node_modules、.next、.open-next、
+# .wrangler、.env*、.dev.vars*、*.log、.DS_Store）；此處只列應用專屬條目。
 
 # TypeScript 自動產生檔案
 *.tsbuildinfo
 next-env.d.ts
-.preview-secrets.tmp
 
-# 本機 Cloudflare 環境變數
-.dev.vars
-
-# /logs 頁面與 API 路由（與根 .gitignore 的 logs 規則無關，反向排除）
-!src/app/api/logs/
-!src/app/api/logs/**
-!src/app/(console)/logs/
-!src/app/(console)/logs/**
-
-# 佈署前自動產生的 D1 種子檔
+# 本機 UI 預覽用的 D1 種子檔
 .preview-seed.sql

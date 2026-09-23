@@ -1,12 +1,12 @@
 // 電源管理業務邏輯：移植自 ec2-power-console，AWS 請求改經共用的
 // ec2Query（SigV4 + 30 秒逾時）。純函式與 AWS 互動集中於此模組，
-// 路由檔僅負責輸入驗證與 D1 存取，使本檔可在 node --test 直接驗證。
+// 路由檔僅負責輸入驗證與 D1 存取。
 import { ec2Query } from "./aws-query.js";
 
 // 地區查詢失敗或執行個體自回應中消失時，狀態欄位的降級顯示值；
 // 前端直接呈現，用於提醒清單資料可能過期，而非反映真實電源狀態。
-export const STATE_QUERY_FAILED = "查詢失敗";
-export const STATE_NOT_FOUND = "未找到";
+const STATE_QUERY_FAILED = "查詢失敗";
+const STATE_NOT_FOUND = "未找到";
 
 function findTagValue(xml, tagName) {
   return xml.match(new RegExp(`<${tagName}>([^<]*)</${tagName}>`))?.[1] || "";
@@ -24,7 +24,7 @@ function findAllTagValues(xml, tagName) {
  * ipAddress 欄位，只能由 DNS 反推；非 compute 網域或任一段大於
  * 255 時視為無法推導，回空字串。
  */
-export function deriveIpFromPublicDns(publicDnsName) {
+function deriveIpFromPublicDns(publicDnsName) {
   const match = String(publicDnsName || "").match(
     /^ec2-(\d{1,3})-(\d{1,3})-(\d{1,3})-(\d{1,3})\.[a-z0-9-]+\.compute(?:-1)?\.amazonaws\.com(?:\.cn)?$/i,
   );
@@ -43,7 +43,7 @@ export function deriveIpFromPublicDns(publicDnsName) {
  * 先比對標準 key/value 結構，失敗時退回片段中第一個 value 標籤
  * （相容部分回應省略 key 的形態）。
  */
-export function extractAwsNameTag(xml) {
+function extractAwsNameTag(xml) {
   const named = xml.match(/<item>\s*<key>Name<\/key>\s*<value>([^<]*)<\/value>\s*<\/item>/);
   if (named) {
     return named[1];
@@ -56,7 +56,7 @@ export function extractAwsNameTag(xml) {
  * 以 instanceId 出現位置切段、各段獨立取值，避免跨執行個體欄位混淆；
  * 同時偵測「有 DNS 但無 ipAddress 且可推導 IP」的 Wavelength 形態。
  */
-export function parseDescribeInstancesXmlItems(xml) {
+function parseDescribeInstancesXmlItems(xml) {
   const instanceMatches = [...xml.matchAll(/<instanceId>([^<]*)<\/instanceId>/g)];
   return instanceMatches.map((match, index) => {
     const nextMatch = instanceMatches[index + 1];
@@ -83,7 +83,7 @@ export function parseDescribeInstancesXmlItems(xml) {
 }
 
 /** 將 DescribeInstances 回應轉為 instanceId → 項目的查找表（忽略空 ID）。 */
-export function parseDescribeInstancesXml(xml) {
+function parseDescribeInstancesXml(xml) {
   const lookup = new Map();
   for (const item of parseDescribeInstancesXmlItems(xml)) {
     if (item.instanceId) {
@@ -94,7 +94,7 @@ export function parseDescribeInstancesXml(xml) {
 }
 
 /** 依地區分組並按地區名排序，供批次查詢使用；項目以複本回傳避免污染來源陣列。 */
-export function buildRegionGroups(machines) {
+function buildRegionGroups(machines) {
   const grouped = new Map();
   for (const machine of machines) {
     const items = grouped.get(machine.region) || [];

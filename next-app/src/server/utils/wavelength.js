@@ -3,7 +3,7 @@ import { allTexts, childrenNamed, firstChildNamed, firstText, parseXml } from ".
 
 /** @typedef {(stage: string, details?: Record<string, unknown>) => void} ProgressReporter */
 
-export const WAVELENGTH_CLOUD_INIT_MARKER = "WAVELENGTH_CLOUD_INIT_DONE";
+const WAVELENGTH_CLOUD_INIT_MARKER = "WAVELENGTH_CLOUD_INIT_DONE";
 
 const MANAGED_TAGS = {
   ManagedBy: "ec2-power-console",
@@ -447,10 +447,6 @@ function isRegionEnabled(region) {
   );
 }
 
-function toBase64(text) {
-  return encodeUserData(text);
-}
-
 function decodeBase64(text) {
   if (!text) {
     return "";
@@ -458,10 +454,7 @@ function decodeBase64(text) {
   return atob(text);
 }
 
-function sleep(env, delayMs) {
-  if (env.__testHooks?.sleep) {
-    return env.__testHooks.sleep(delayMs);
-  }
+function sleep(delayMs) {
   return new Promise((resolve) => {
     setTimeout(resolve, delayMs);
   });
@@ -494,40 +487,29 @@ async function tagExistingResource(env, region, resourceId, zone) {
   await ec2Query(region, env, "CreateTags", params);
 }
 
-function validateDeployInput(input) {
-  const required = ["region", "zone", "vpc_id", "instance_type", "os"];
-  for (const field of required) {
+/** 檢查必填欄位後才送往 AWS，避免以殘缺參數送出請求。 */
+function requireFields(input, fields) {
+  for (const field of fields) {
     if (!input?.[field]) {
       throw new WavelengthError(`缺少必要欄位: ${field}`);
     }
   }
+}
+
+function validateDeployInput(input) {
+  requireFields(input, ["region", "zone", "vpc_id", "instance_type", "os"]);
 }
 
 function validateRegionalDeployInput(input) {
-  const required = ["region", "vpc_id", "os"];
-  for (const field of required) {
-    if (!input?.[field]) {
-      throw new WavelengthError(`缺少必要欄位: ${field}`);
-    }
-  }
+  requireFields(input, ["region", "vpc_id", "os"]);
 }
 
 function validateListExistingWavelengthInstancesInput(input) {
-  const required = ["region", "zone", "vpc_id"];
-  for (const field of required) {
-    if (!input?.[field]) {
-      throw new WavelengthError(`缺少必要欄位: ${field}`);
-    }
-  }
+  requireFields(input, ["region", "zone", "vpc_id"]);
 }
 
 function validateExistingForwarderInput(input) {
-  const required = ["region", "zone", "vpc_id", "instance_id", "os"];
-  for (const field of required) {
-    if (!input?.[field]) {
-      throw new WavelengthError(`缺少必要欄位: ${field}`);
-    }
-  }
+  requireFields(input, ["region", "zone", "vpc_id", "instance_id", "os"]);
 }
 
 function getRegionalInstanceType() {
@@ -547,12 +529,7 @@ function isRetryablePollingError(error) {
 }
 
 function validateInitInput(input) {
-  const required = ["region", "zone", "vpc_id"];
-  for (const field of required) {
-    if (!input?.[field]) {
-      throw new WavelengthError(`缺少必要欄位: ${field}`);
-    }
-  }
+  requireFields(input, ["region", "zone", "vpc_id"]);
 }
 
 function getOsDefinition(value) {
@@ -719,7 +696,7 @@ function formatRuncmd(commands) {
   return commands.map((command) => `  - ${command}`).join("\n");
 }
 
-export function buildCloudInit(credential) {
+function buildCloudInit(credential) {
   const { preamble, runcmd } = buildCredentialCloudInitBody(credential);
 
   return `#cloud-config
@@ -732,7 +709,7 @@ ${formatRuncmd(runcmd)}
 `;
 }
 
-export function buildForwarderCloudInit(credential, targetPrivateIp, listenPort) {
+function buildForwarderCloudInit(credential, targetPrivateIp, listenPort) {
   const { preamble, runcmd } = buildCredentialCloudInitBody(credential);
 
   return `#cloud-config
@@ -783,7 +760,7 @@ function rangesOverlap(leftStart, leftEnd, rightStart, rightEnd) {
   return leftStart <= rightEnd && rightStart <= leftEnd;
 }
 
-export function chooseAvailableSubnetCidr(vpcCidr, existingSubnetCidrs) {
+function chooseAvailableSubnetCidr(vpcCidr, existingSubnetCidrs) {
   const vpc = parseCidr(vpcCidr);
   if (vpc.prefixLength > 26) {
     throw new WavelengthError(`VPC CIDR 太小，無法切出 /26 子網: ${vpcCidr}`);
@@ -956,7 +933,7 @@ async function ensureWavelengthZoneReady(env, region, zoneName) {
     const deadline = Date.now() + OPT_IN_POLL_TIMEOUT_MS;
     let refreshed = zoneDetails;
     while (Date.now() < deadline) {
-      await sleep(env, OPT_IN_POLL_INTERVAL_MS);
+      await sleep(OPT_IN_POLL_INTERVAL_MS);
       refreshed = await describeWavelengthZone(env, region, zoneName);
       if (!refreshed) {
         throw new WavelengthError(`Wavelength Zone 不存在: ${zoneName}`, {
@@ -1361,7 +1338,7 @@ async function waitForInstanceRunning(env, region, instanceId) {
       }
     }
     if (attempt < POLL_ATTEMPTS - 1) {
-      await sleep(env, POLL_DELAY_MS);
+      await sleep(POLL_DELAY_MS);
     }
   }
 
@@ -1384,7 +1361,7 @@ async function waitForInstancePublicDns(env, region, instanceId) {
       }
     }
     if (attempt < POLL_ATTEMPTS - 1) {
-      await sleep(env, POLL_DELAY_MS);
+      await sleep(POLL_DELAY_MS);
     }
   }
 
@@ -1422,7 +1399,7 @@ async function waitForInstanceStatusOk(env, region, instanceId, onProgress = () 
       });
     }
     if (attempt < POLL_ATTEMPTS - 1) {
-      await sleep(env, POLL_DELAY_MS);
+      await sleep(POLL_DELAY_MS);
     }
   }
 
@@ -1446,7 +1423,7 @@ async function waitForCloudInit(env, region, instanceId) {
       }
     }
     if (attempt < POLL_ATTEMPTS - 1) {
-      await sleep(env, POLL_DELAY_MS);
+      await sleep(POLL_DELAY_MS);
     }
   }
 
@@ -1567,7 +1544,7 @@ async function launchForwarderInstance({
   onProgress,
 }) {
   const listenPort = generateForwarderListenPort();
-  const userData = toBase64(buildForwarderCloudInit(credential, targetPrivateIp, listenPort));
+  const userData = encodeUserData(buildForwarderCloudInit(credential, targetPrivateIp, listenPort));
   const runParams = {
     ImageId: image.imageId,
     InstanceType: instanceType,
@@ -1696,7 +1673,7 @@ export async function deployRegionalEc2Instance(env, input, /** @type {ProgressR
       username: "root",
       credential_type: credential.type,
     });
-    const userData = toBase64(buildCloudInit(credential));
+    const userData = encodeUserData(buildCloudInit(credential));
     const runParams = {
       ImageId: image.imageId,
       InstanceType: regionalInstanceType,
@@ -1900,7 +1877,7 @@ export async function deployWavelengthInstance(env, input, /** @type {ProgressRe
       username: "root",
       credential_type: credential.type,
     });
-    const userData = toBase64(buildCloudInit(credential));
+    const userData = encodeUserData(buildCloudInit(credential));
     const runParams = {
       ImageId: image.imageId,
       InstanceType: input.instance_type,

@@ -1,5 +1,4 @@
-// D1 資料存取層：所有 SQL 集中於此，路由檔只呼叫這些函式，
-// 使業務邏輯可在 node --test 以記憶體 D1 樁直接驗證。
+// D1 資料存取層：所有 SQL 集中於此，路由檔只呼叫這些函式。
 // 慣例：每個函式的第一個參數都是 D1 binding（env.DB），
 // 不在模組內持有任何連線狀態，以符合 Workers 每請求注入的模式。
 import {
@@ -256,7 +255,7 @@ export async function markAwsAccountVerified(db, id) {
   await db.prepare("UPDATE aws_accounts SET last_verified_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1").bind(id).run();
 }
 
-export async function countMachinesForAwsAccount(db, id) {
+async function countMachinesForAwsAccount(db, id) {
   const { results } = await db.prepare("SELECT id FROM machines WHERE aws_account_id = ?1").bind(id).all();
   return results.length;
 }
@@ -296,28 +295,6 @@ export async function getSsoConfig(db, encryptionKey) {
   }
   const clientSecret = await decryptOidcClientSecret(row, encryptionKey);
   return { ...row, clientSecret };
-}
-
-/**
- * 儲存 OOBE 完成 SSO 驗證後的設定（單列 upsert）；client secret 加密後寫入。
- */
-export async function saveSsoConfig(db, config, encryptionKey) {
-  const encrypted = await encryptOidcClientSecret(config.clientSecret, encryptionKey);
-  const existing = await db.prepare("SELECT id FROM sso_config WHERE id = 1").first();
-  if (existing) {
-    await db.prepare(`UPDATE sso_config SET issuer = ?1, authorization_endpoint = ?2, token_endpoint = ?3,
-      jwks_uri = ?4, client_id = ?5, client_secret_ciphertext = ?6, client_secret_iv = ?7,
-      allowed_email = ?8, updated_at = datetime('now') WHERE id = 1`)
-      .bind(config.issuer, config.authorizationEndpoint, config.tokenEndpoint, config.jwksUri, config.clientId, encrypted.clientSecretCiphertext, encrypted.clientSecretIv, config.allowedEmail)
-      .run();
-    return;
-  }
-  await db
-    .prepare(`INSERT INTO sso_config (id, issuer, authorization_endpoint, token_endpoint, jwks_uri,
-      client_id, client_secret_ciphertext, client_secret_iv, allowed_email)
-      VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`)
-    .bind(config.issuer, config.authorizationEndpoint, config.tokenEndpoint, config.jwksUri, config.clientId, encrypted.clientSecretCiphertext, encrypted.clientSecretIv, config.allowedEmail)
-    .run();
 }
 
 const PENDING_SSO_SETUP_TTL_MS = 10 * 60 * 1000;
@@ -373,7 +350,7 @@ export async function getPendingSsoSetup(db, id, encryptionKey, now = Date.now()
 }
 
 /** 刪除指定的 pending OOBE 設定。 */
-export async function deletePendingSsoSetup(db, id) {
+async function deletePendingSsoSetup(db, id) {
   const result = await db.prepare("DELETE FROM pending_sso_setup WHERE id = ?1").bind(id).run();
   return (result.meta.changes ?? 0) > 0;
 }

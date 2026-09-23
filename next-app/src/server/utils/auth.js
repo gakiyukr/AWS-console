@@ -1,41 +1,13 @@
 // 認證工具：session／OIDC state 的 HMAC 簽章與驗證、cookie 建構與解析。
 // 簽章值為 payload.signature 形式，SESSION_SECRET 為 HMAC-SHA256 金鑰；
-// 輪換 secret 即撤銷所有已發 session。全函式為純模組，依賴僅 Web
-// Crypto，node --test 可直接驗證。
+// 輪換 secret 即撤銷所有已發 session。
+import { bytesToBase64, fromBase64Url, toBase64Url } from "./bytes.js";
 import { getHeaderValue } from "./http.js";
 
 export const SESSION_COOKIE = "ec2_session";
-export const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-function bytesToBase64(bytes) {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
-}
-
-function base64ToBytes(text) {
-  const binary = atob(text);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-export function toBase64Url(text) {
-  return bytesToBase64(new TextEncoder().encode(text))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
-
-function fromBase64Url(text) {
-  const padded = text.replace(/-/g, "+").replace(/_/g, "/");
-  const padLength = (4 - (padded.length % 4 || 4)) % 4;
-  return new TextDecoder().decode(base64ToBytes(padded + "=".repeat(padLength)));
-}
+export { fromBase64Url, toBase64Url };
 
 async function signText(text, secret) {
   const data = new TextEncoder().encode(secret);

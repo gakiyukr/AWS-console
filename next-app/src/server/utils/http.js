@@ -87,23 +87,8 @@ export function sseResponse(onStart) {
 }
 
 /**
- * 解析用戶端真實 IP，作為登入限流的鍵。
- * Cloudflare 環境以 CF-Connecting-IP 為準（不可偽造）；
- * 本機開發依序退回 X-Forwarded-For / X-Real-IP / unknown。
- */
-export function getClientIp(headers) {
-  const forwardedFor = getHeaderValue(headers, "x-forwarded-for");
-  return (
-    getHeaderValue(headers, "cf-connecting-ip")
-    || forwardedFor.split(",")[0]?.trim()
-    || getHeaderValue(headers, "x-real-ip")
-    || "unknown"
-  );
-}
-
-/**
  * 解析 JSON 請求內容；格式錯誤回 null，由呼叫端決定錯誤語意。
- * Next.js Route Handler 與測試呼叫端皆傳入 Fetch Request。
+ * Next.js Route Handler 傳入 Fetch Request。
  */
 export async function readJsonBody(request) {
   try {

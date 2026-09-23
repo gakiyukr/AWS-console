@@ -5,7 +5,8 @@
 ## 功能
 
 - 以 OIDC SSO（Authorization Code + PKCE）登入，僅允許清單內的 email 進入主控台。
-- 管理 D1 清單內 EC2 執行個體的即時狀態與開機、關機操作。
+- 管理 D1 清單內 EC2 執行個體的即時狀態，並執行開機、關機、重啟、終止，
+  以及「更換公網 IP」（stop → start）。
 - 建立及初始化 AWS Wavelength Zone 所需的子網、Carrier Gateway、路由表與安全群組。
 - 以獨立工作流部署一般區域 EC2、Wavelength 執行個體與 SSH forwarder。
 - 部署成功後自動將建立的執行個體登錄至電源管理清單。
@@ -26,6 +27,7 @@ next-app/
 ├── src/app/login/、setup/  # 登入頁與 OOBE 初始設定
 ├── src/app/api/         # API 路由（見下方「API 範圍」）
 ├── src/server/          # 守衛（page-guard、api-guard）與後端工具層
+├── src/lib/             # 前後端共用：regions、ssh-keys、deployment-stream
 ├── src/components/      # AppShell、Chip、NoSsr 等共用元件
 ├── server/db/migrations # D1 migrations（wrangler.jsonc 引用）
 ├── wrangler.jsonc       # Worker 設定（正式名稱 aws-console、D1 binding）
@@ -142,7 +144,9 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
         "ec2:DescribeInstances",
         "ec2:DescribeImages",
         "ec2:StartInstances",
-        "ec2:StopInstances"
+        "ec2:StopInstances",
+        "ec2:RebootInstances",
+        "ec2:TerminateInstances"
       ],
       "Resource": "*"
     }
@@ -177,9 +181,15 @@ Security Group 與 `ec2:RunInstances` 等權限；一般 EC2 部署亦需 `ec2:R
 
 - `/api/auth/login`：SSO 登入入口，302 導向 IdP 授權端點。
 - `/api/auth/callback`：IdP 回調，驗證後簽發 session。
+- `/api/session`：查詢目前登入狀態。
+- `/api/logout`：清除 session。
 - `/api/setup/*`：OOBE 初始設定的測試連線與驗證啟動。
-- `/api/machines`：EC2 管理清單與即時狀態。
-- `/api/machines/:id/action`：白名單機器的開機或關機。
+- `/api/machines`：EC2 管理清單與即時狀態；`DELETE /:id` 僅移除清單記錄。
+- `/api/machines/:id/action`：對清單內機器送出 `start`、`stop`、`reboot` 或
+  `terminate`。`reboot` 不會更換公網 IP；`terminate` 為不可逆操作，成功後
+  執行個體被永久刪除並同步移除清單記錄。
+- `/api/machines/:id/reboot-ip`：連續執行 stop → 等待 stopped → start，
+  藉此更換公網 IP。
 - `/api/accounts`：AWS 帳號與加密憑證管理；`/:id/test` 可驗證憑證，`/:id/regions/enable` 可開通區域。
 - `/api/ssh-keys`：部署用 SSH 公鑰庫的列表、新增（上限 50 把）與刪除。
 - `/api/ec2/*`：一般 EC2 的 Region、VPC、執行個體、作業系統選項與部署流程。
@@ -206,7 +216,7 @@ SSE 進度事件 `credentials_ready` 僅公布 `username` 與 `credential_type`�
 
 migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_dir` 引用：
 
-- `0001_init.sql`：machines、audit_logs 等基礎資料表。
+- `0001_init.sql`：machines、operation_log 等基礎資料表（login_rate_limit 已於 0004 移除）。
 - `0002_seed_legacy_machine.sql`：既有機器種子資料。
 - `0003_accounts_and_users.sql`：AWS 帳號資料表，並為機器及操作日誌加入 AWS 帳號關聯；建立第一個 AWS 帳號時，尚未關聯的舊機器會自動歸入該帳號。
 - `0004_drop_console_users.sql`：改用 SSO 後移除密碼使用者與登入限流資料表。
@@ -220,3 +230,16 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
 - **HeroUI Table 需包 `<NoSsr>`**：Table 的 SSR 在 CI 建置的 bundle 上會觸發 react-aria collections 錯誤；頁面透過 `table-lazy.ts` 轉介 namespace，並以 `no-ssr.tsx` 的掛載閘門包住。
 - **OpenNext minimal mode**：`wrangler.jsonc` 設 `NEXT_PRIVATE_MINIMAL_MODE=1`，繞過 opennextjs-cloudflare #1232 的 `getMiddlewareManifest()` 問題（本專案不用 Next middleware，守衛在 layout 實作）。
 - **生產錯誤觀測**：`src/instrumentation.ts` 的 `onRequestError` hook 會把被 Next 遮蔽的 RSC 錯誤（digest／stack）寫入 console，搭配 `wrangler.jsonc` 的 `observability.enabled` 可在 Cloudflare Dashboard 的 Workers Logs 查得。
+
+## 執行期限制
+
+- **Workers 子請求上限**：部署流程在單次 Worker 呼叫內以輪詢等待執行個體就緒
+  （`waitForInstanceRunning` / `waitForPublicDns` / `waitForStatusOk` /
+  `waitForCloudInit`），累計子請求可能觸及 Cloudflare 免費方案的單次呼叫上限
+  （50 個）。逾限時 SSE 會回報 `Too many subrequests by single Worker invocation`，
+  且部署結果帶 `ready: false` 與 `wait_error`。**此時執行個體通常已成功啟動**，
+  只是就緒檢查未完成——請保存回傳的連線憑證，稍後直接連線或至 AWS 主控台確認。
+  付費方案上限較高，一般不會遇到。
+- **前端 SSE 閒置逾時**：`src/lib/deployment-stream.ts` 以 90 秒閒置逾時判定連線
+  中斷（非總時長），避免部署頁在連線被中介代理悄悄切斷時永久停在「部署流程執行中」。
+  串流結束若未收到 `result` 或 `error` 事件，一律視為失敗而非成功。

@@ -1,22 +1,22 @@
-# Node dependencies
+# 相依套件
 node_modules
 
-# Local build/dev state
+# 本機建置與執行狀態
 .wrangler
 .next
 .open-next
 
-# Logs
-logs
+# 日誌（僅根目錄：專案內有 src/app/**/logs 路由目錄，不可用遞迴規則）
+/logs
 *.log
 
-# Misc
+# 編輯器與作業系統
 .DS_Store
 .fleet
 .idea
 .zcode
 
-# Local env files
+# 本機環境變數
 .env
 .env.*
 !.env.example

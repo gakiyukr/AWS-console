@@ -31,15 +31,11 @@ export async function GET(request: Request): Promise<Response> {
 
   try {
     const { awsEnv } = await resolveAwsAccount(env, query.get("account_id"));
-    // 測試注入點：與舊版 worker 相同，允許以樁替換清單函式
-    const testHooks = (env as unknown as Record<string, Record<string, unknown>> | null)?.__testHooks;
-    const listFn = (testHooks?.listExistingWavelengthInstances as typeof listExistingWavelengthInstances)
-      || listExistingWavelengthInstances;
     return jsonResponse({
       region,
       zone,
       vpc_id: vpcId,
-      instances: await listFn(awsEnv, { region, zone, vpc_id: vpcId }),
+      instances: await listExistingWavelengthInstances(awsEnv, { region, zone, vpc_id: vpcId }),
     });
   } catch (error) {
     const httpError = toHttpError(error);

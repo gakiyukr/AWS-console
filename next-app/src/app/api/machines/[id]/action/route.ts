@@ -36,7 +36,7 @@ export async function POST(
   }
 
   const action = body.action;
-  if (action !== "start" && action !== "stop") {
+  if (action !== "start" && action !== "stop" && action !== "reboot") {
     return errorResponse(400, "不支援的操作。");
   }
 

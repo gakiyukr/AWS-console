@@ -266,6 +266,8 @@ export default function MachinesPage() {
   // ── 確認對話框（關閉／移除共用結構，目標與開關分離保存） ────
   const [stopTarget, setStopTarget] = useState<MachineRow | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
+  const [rebootTarget, setRebootTarget] = useState<MachineRow | null>(null);
+  const [rebootOpen, setRebootOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<MachineRow | null>(null);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -279,11 +281,22 @@ export default function MachinesPage() {
     void performAction(machine, action);
   }
 
+  function requestReboot(machine: MachineRow) {
+    setRebootTarget(machine);
+    setRebootOpen(true);
+  }
+
+  async function confirmReboot() {
+    const machine = rebootTarget;
+    setRebootOpen(false);
+    setRebootTarget(null);
+    if (machine) await performAction(machine, "reboot");
+  }
+
   async function confirmStop() {
     const machine = stopTarget;
     setStopOpen(false);
     setStopTarget(null);
-    if (machine) await performAction(machine, "stop");
   }
 
   async function submitRemove() {
@@ -440,14 +453,24 @@ export default function MachinesPage() {
                                 啟動
                               </Button>
                             ) : (
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                isDisabled={actionPendingId === machine.id}
-                                onPress={() => requestPowerAction(machine, "stop")}
-                              >
-                                關閉
-                              </Button>
+                              <>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  isDisabled={actionPendingId === machine.id}
+                                  onPress={() => requestReboot(machine)}
+                                >
+                                  重啟
+                                </Button>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  isDisabled={actionPendingId === machine.id}
+                                  onPress={() => requestPowerAction(machine, "stop")}
+                                >
+                                  關閉
+                                </Button>
+                              </>
                             )}
                             <Button
                               variant="ghost"
@@ -598,8 +621,25 @@ export default function MachinesPage() {
         </Modal.Container>
         </Modal.Backdrop>
       </Modal.Root>
-
-      {/* 確認移除 */}
+      {/* 確認重啟 */}
+      <Modal.Root isOpen={rebootOpen} onOpenChange={setRebootOpen}>
+        <Modal.Backdrop>
+        <Modal.Container size="sm" placement="center">
+          <Modal.Dialog>
+            <Modal.Header>
+              <Modal.Heading>確認重啟機器</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body>
+              確定要重啟「{rebootTarget?.name}」嗎？此操作將中斷 SSH 連線並重新啟動 AWS EC2 執行個體。
+            </Modal.Body>
+            <Modal.Footer>
+              <Button variant="secondary" onPress={() => setRebootOpen(false)}>取消</Button>
+              <Button onPress={confirmReboot}>重啟</Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
       <Modal.Root isOpen={removeOpen} onOpenChange={setRemoveOpen}>
         <Modal.Backdrop>
         <Modal.Container size="sm" placement="center">

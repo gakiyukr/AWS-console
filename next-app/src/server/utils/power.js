@@ -200,17 +200,18 @@ export async function listRegionInstances(env, region) {
 }
 
 /**
- * 對單一機器送出電源操作。僅接受 start|stop，其餘動作一律拒絕，
+ * 對單一機器送出電源操作。僅接受 start|stop|reboot，其餘動作一律拒絕，
  * 避免任意 Action 字串注入 AWS API。
  */
 export async function performPowerAction(env, machine, action) {
-  if (action !== "start" && action !== "stop") {
+  if (action !== "start" && action !== "stop" && action !== "reboot") {
     throw new Error("Unsupported action");
   }
+  const apiAction = action === "reboot" ? "RebootInstances" : (action === "start" ? "StartInstances" : "StopInstances");
   await ec2Query(
     machine.region,
     env,
-    action === "start" ? "StartInstances" : "StopInstances",
+    apiAction,
     { "InstanceId.1": machine.instanceId },
   );
   return { ok: true, action };

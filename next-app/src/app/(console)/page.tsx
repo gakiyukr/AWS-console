@@ -129,8 +129,8 @@ export default function MachinesPage() {
     }
   }
 
-  // 電源操作：stop 需先經確認對話框才會呼叫
-  async function performAction(machine: MachineRow, action: "start" | "stop") {
+  // 電源操作：stop/reboot 需先經確認對話框才會呼叫
+  async function performAction(machine: MachineRow, action: "start" | "stop" | "reboot") {
     setActionPendingId(machine.id);
     try {
       const response = await fetch(`/api/machines/${machine.id}/action`, {
@@ -141,7 +141,12 @@ export default function MachinesPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      toast.success(`${machine.name} 已送出${action === "start" ? "啟動" : "關閉"}請求`);
+      const message = action === "start" 
+        ? `${machine.name} 已送出啟動請求`
+        : action === "stop"
+          ? `${machine.name} 已送出關閉請求`
+          : `${machine.name} 已送出重啟請求`;
+      toast.success(message);
       await new Promise(resolve => setTimeout(resolve, 2000));
       await loadMachines();
     } catch (error) {

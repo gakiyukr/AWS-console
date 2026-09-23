@@ -30,6 +30,10 @@ interface AwsAccountOption {
 const ACTION_LABELS: Record<string, string> = {
   start: "啟動執行個體",
   stop: "停止執行個體",
+  reboot: "重啟執行個體",
+  terminate: "終止執行個體",
+  "reboot-ip": "更換公網 IP",
+  machine_remove: "自清單移除機器",
   init_zone: "初始化 WL Zone",
   deploy_wavelength: "部署 Wavelength EC2",
   deploy_regional: "部署一般 EC2",
@@ -39,6 +43,15 @@ const ACTION_LABELS: Record<string, string> = {
 
 function toastDanger(message: string) {
   toast(message, { variant: "danger" });
+}
+
+// D1 datetime('now') 為 UTC 且無時區標記，補成 ISO 格式再轉本地時間；
+// 直接 new Date() 會把「YYYY-MM-DD HH:MM:SS」當本地時間（UTC+8 少 8 小時），
+// Safari 更會解析失敗顯示 Invalid Date。
+function formatCreatedAt(value: string) {
+  if (!value) return "—";
+  const date = new Date(`${value.replace(" ", "T")}Z`);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-TW");
 }
 
 // detail 多為 JSON 字串，能解析就美化顯示
@@ -217,15 +230,15 @@ export default function LogsPage() {
                         <Table.Row id={String(entry.id)} key={entry.id}>
                           <Table.Cell>
                             <span className="whitespace-nowrap text-xs">
-                              {new Date(entry.createdAt).toLocaleString("zh-TW")}
+                              {formatCreatedAt(entry.createdAt)}
                             </span>
-                          </Table.Cell>
-                          <Table.Cell>
-                            <div className="text-xs">{entry.awsAccountId ? `#${entry.awsAccountId}` : "—"}</div>
                           </Table.Cell>
                           <Table.Cell>
                             <div className="font-medium">{ACTION_LABELS[entry.action] || entry.action}</div>
                             <div className="font-mono text-xs text-muted">{entry.action}</div>
+                          </Table.Cell>
+                          <Table.Cell>
+                            <div className="text-xs">{entry.awsAccountId ? `#${entry.awsAccountId}` : "—"}</div>
                           </Table.Cell>
                           <Table.Cell>
                             <div className="font-mono text-xs">{entry.region || "—"}</div>

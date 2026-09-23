@@ -3,7 +3,7 @@
 // Wavelength 部署：初始化 Zone 託管資源、部署 Wavelength EC2（可選
 // 同建 SSH forwarder），或為既有 WL 執行個體部署區域型 forwarder。
 // 部署流程以 SSE 即時回報進度，結果可複製／下載。
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Clipboard, Download, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
@@ -129,7 +129,12 @@ async function readEventStream(
   }
   if (buffer.trim()) processBlock(buffer);
   if (finalError) throw new Error(finalError);
-  return finalResult || {};
+  // 後端正常結束必發出 result 或 error；兩者皆無代表連線中途斷開，
+  // 此時不可當成部署成功，否則會顯示綠色成功與空結果。
+  if (!finalResult) {
+    throw new Error("部署連線中斷，未收到最終結果；請至操作日誌確認實際狀態。");
+  }
+  return finalResult;
 }
 
 const EMPTY_FORM = {
@@ -162,6 +167,8 @@ export default function WavelengthPage() {
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [loadingRegion, setLoadingRegion] = useState(false);
   const [loadingTypes, setLoadingTypes] = useState(false);
+  // 快速切換 Zone 會併發多個機型查詢，以序號讓過期回應作廢
+  const instanceTypesRequestId = useRef(0);
   const [loadingInstances, setLoadingInstances] = useState(false);
   const [busyAction, setBusyAction] = useState("");
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
@@ -230,13 +237,24 @@ export default function WavelengthPage() {
       );
       const firstAccount = enabled.find(account => account.isDefault) || enabled[0];
       setAccounts(enabled);
-      updateForm({ accountId: firstAccount?.id ?? null });
-      if (firstAccount) {
-        const regionResponse = await fetch(`/api/wavelength/regions?account_id=${firstAccount.id}`);
-        if (regionResponse.ok) {
-          const regionPayload = await regionResponse.json();
-          setRegions(regionPayload.regions || []);
+      // 重新載入時保留目前選取的帳號（若仍啟用），否則下游的 region/zone/VPC
+      // 會與被重置的帳號組成矛盾組合；僅首次載入才套用預設帳號。
+      const keepAccountId = form.accountId && enabled.some(account => account.id === form.accountId)
+        ? form.accountId
+        : null;
+      const activeAccount = keepAccountId
+        ? enabled.find(account => account.id === keepAccountId) ?? null
+        : firstAccount;
+      if (!keepAccountId) {
+        updateForm({ accountId: firstAccount?.id ?? null });
+      }
+      if (activeAccount) {
+        const regionResponse = await fetch(`/api/wavelength/regions?account_id=${activeAccount.id}`);
+        if (!regionResponse.ok) {
+          throw new Error("載入 Wavelength Region 失敗");
         }
+        const regionPayload = await regionResponse.json();
+        setRegions(regionPayload.regions || []);
       }
       if (!osResponse.ok) throw new Error("載入作業系統選項失敗");
       const osPayload = await osResponse.json();
@@ -288,6 +306,7 @@ export default function WavelengthPage() {
     }
   }
   async function loadInstanceTypes(zone: string) {
+    const requestId = ++instanceTypesRequestId.current;
     setInstanceTypes([]);
     updateForm({ instanceType: "" });
     if (!form.region || !zone) return;
@@ -299,6 +318,8 @@ export default function WavelengthPage() {
       );
       if (!response.ok) throw new Error("載入執行個體類型失敗");
       const payload = await response.json();
+      // 切換 Zone 會併發多個請求，較慢的舊回應不得覆蓋新選擇
+      if (requestId !== instanceTypesRequestId.current) return;
       const types: string[] = payload.instance_types || [];
       setInstanceTypes(types);
       // Wavelength Zone 可能沒有 Instance Type Offering，但部署仍可進行
@@ -307,30 +328,34 @@ export default function WavelengthPage() {
         console.warn(`Wavelength Zone ${zone} 沒有 Instance Type Offering，將顯示常用選項`);
         setInstanceTypes(["t3.nano", "t3.small", "t3.medium"]);
         updateForm({ instanceType: "t3.nano" });
-        toast.info("Wavelength Zone 尚未提供 Instance Type 列表，已預設 t3.nano");
+        toast.info("此 Zone 未回報可用機型，已預設 t3.nano");
       } else {
         updateForm({ instanceType: types[0] || "" });
       }
     } catch {
+      if (requestId !== instanceTypesRequestId.current) return;
       toastDanger("載入執行個體類型失敗");
     } finally {
-      setLoadingTypes(false);
+      if (requestId === instanceTypesRequestId.current) {
+        setLoadingTypes(false);
+      }
     }
   }
   // 覆蓋參數解決 React 閉包過期狀態：勾選 checkbox 或切換 Zone 時，
   // setState 尚未生效，閉包內的 form.useExistingInstance / form.zone 仍是舊值，
   // 直接讀取會在守衛處短路而不發出請求。
-  async function loadExistingInstances(overrides?: { useExisting?: boolean; zone?: string }) {
+  async function loadExistingInstances(overrides?: { useExisting?: boolean; zone?: string; vpc?: string }) {
     const useExisting = overrides?.useExisting ?? form.useExistingInstance;
     const zone = overrides?.zone ?? form.zone;
+    const vpcId = overrides?.vpc ?? form.vpcId;
     setExistingInstances([]);
     updateForm({ existingInstanceId: "" });
-    if (!useExisting || !form.region || !zone || !form.vpcId) return;
+    if (!useExisting || !form.region || !zone || !vpcId) return;
 
     setLoadingInstances(true);
     try {
       const response = await fetch(
-        `/api/wavelength/instances?account_id=${form.accountId}&region=${encodeURIComponent(form.region)}&zone=${encodeURIComponent(zone)}&vpc_id=${encodeURIComponent(form.vpcId)}`,
+        `/api/wavelength/instances?account_id=${form.accountId}&region=${encodeURIComponent(form.region)}&zone=${encodeURIComponent(zone)}&vpc_id=${encodeURIComponent(vpcId)}`,
       );
       if (!response.ok) throw new Error("載入既有 Wavelength 執行個體失敗");
       const payload = await response.json();
@@ -341,6 +366,17 @@ export default function WavelengthPage() {
       toastDanger("載入既有 Wavelength 執行個體失敗");
     } finally {
       setLoadingInstances(false);
+    }
+  }
+
+  function selectVpc(vpcId: string) {
+    updateForm({ vpcId });
+    // VPC 變更後先前的執行個體清單與選擇已失效，需一併清除，
+    // 否則會送出 vpc_id 與 instance_id 互相矛盾的 payload。
+    setExistingInstances([]);
+    updateForm({ existingInstanceId: "" });
+    if (form.useExistingInstance && form.region && form.zone) {
+      void loadExistingInstances({ vpc: vpcId });
     }
   }
 
@@ -455,15 +491,12 @@ export default function WavelengthPage() {
   }
 
   useEffect(() => {
-    let cancelled = false;
+    // 首次掛載載入帳號、Region、OS 選項與公鑰；載入函式各自管理 loading
+    // 狀態與錯誤提示，故此處無需額外的取消旗標。
     async function init() {
       await Promise.all([loadInitialOptions(), loadSshKeys()]);
-      if (cancelled) return;
     }
     void init();
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -559,7 +592,7 @@ export default function WavelengthPage() {
                 className={selectClassName}
                 disabled={!form.region || loadingRegion || isBusy}
                 value={form.vpcId}
-                onChange={event => updateForm({ vpcId: event.target.value })}
+                onChange={event => selectVpc(event.target.value)}
               >
                 <option value="">{loadingRegion ? "載入中..." : "請選擇 VPC"}</option>
                 {vpcs.map(vpc => (
@@ -580,8 +613,8 @@ export default function WavelengthPage() {
                 {instanceTypes.map(type => (
                   <option key={type} value={type}>{type}</option>
                 ))}
-                {!loadingTypes && instanceTypes.length > 0 && (
-                  <optgroup label="常見 Wavelength 機型（當 API 無法載入時可選）">
+                {!loadingTypes && instanceTypes.length === 0 && (
+                  <optgroup label="常見 Wavelength 機型（API 未回報時可選）">
                     <option value="t3.nano">t3.nano</option>
                     <option value="t3.small">t3.small</option>
                     <option value="t3.medium">t3.medium</option>
@@ -593,7 +626,7 @@ export default function WavelengthPage() {
                 {loadingTypes
                   ? "查詢 AWS 可用執行個體類型..."
                   : instanceTypes.length === 0
-                    ? "API 未回報可用機型；請使用上方常見選項或手動輸入 t3.nano"
+                    ? "所選 Zone 未回報可用機型；請改用上方常見機型，部署時仍會向 AWS 驗證。"
                     : `該 Zone 可用機型：${instanceTypes.join(", ")}`}
               </p>
             </div>

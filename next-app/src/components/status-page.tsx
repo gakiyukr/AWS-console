@@ -14,6 +14,16 @@ interface StatusPageProps {
 export function StatusPage({ code, title, description, showRetry = false }: StatusPageProps) {
   const router = useRouter();
 
+  // 直接輸入網址進入錯誤頁時瀏覽歷史長度為 1，router.back() 無作用；
+  // 此時改為導向首頁，避免留下死按鈕。
+  function goBack() {
+    if (window.history.length > 1) {
+      router.back();
+      return;
+    }
+    router.push("/");
+  }
+
   return (
     <div className="h-svh">
       <div className="m-auto flex h-full w-full flex-col items-center justify-center gap-2">
@@ -21,7 +31,7 @@ export function StatusPage({ code, title, description, showRetry = false }: Stat
         <span className="font-medium">{title}</span>
         <p className="text-center text-muted whitespace-pre-line">{description}</p>
         <div className="mt-6 flex gap-4">
-          <Button variant="secondary" onPress={() => router.back()}>
+          <Button variant="secondary" onPress={goBack}>
             返回上一頁
           </Button>
           {showRetry

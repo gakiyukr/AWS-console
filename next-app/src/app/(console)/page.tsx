@@ -53,6 +53,13 @@ const STATE_LABELS: Record<string, string> = {
   terminated: "已終止",
 };
 
+// 電源操作成功後的提示文案，鍵與 /action 端點接受的 action 對齊
+const POWER_ACTION_TOASTS: Record<string, string> = {
+  start: "已送出啟動請求",
+  stop: "已送出關機請求",
+  reboot: "已送出重啟請求",
+  terminate: "已終止執行個體",
+};
 function stateLabel(state: string | null) {
   if (!state) return "未知";
   return STATE_LABELS[state] || state;
@@ -122,15 +129,13 @@ export default function MachinesPage() {
         throw new Error(await readError(response));
       }
       setMachines(await response.json());
-    } catch {
-      toastDanger("重新整理失敗");
     } finally {
       setRefreshing(false);
     }
   }
 
-  // 電源操作：stop/reboot 需先經確認對話框才會呼叫
-  async function performAction(machine: MachineRow, action: "start" | "stop" | "reboot") {
+  // 電源操作：stop/reboot/terminate 需先經確認對話框才會呼叫
+  async function performAction(machine: MachineRow, action: "start" | "stop" | "reboot" | "terminate") {
     setActionPendingId(machine.id);
     try {
       const response = await fetch(`/api/machines/${machine.id}/action`, {
@@ -141,12 +146,7 @@ export default function MachinesPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      const message = action === "start" 
-        ? `${machine.name} 已送出啟動請求`
-        : action === "stop"
-          ? `${machine.name} 已送出關閉請求`
-          : `${machine.name} 已送出重啟請求`;
-      toast.success(message);
+      toast.success(`${machine.name} ${POWER_ACTION_TOASTS[action]}`);
       await new Promise(resolve => setTimeout(resolve, 2000));
       await loadMachines();
     } catch (error) {
@@ -278,6 +278,8 @@ export default function MachinesPage() {
   const [removeTarget, setRemoveTarget] = useState<MachineRow | null>(null);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [terminateTarget, setTerminateTarget] = useState<MachineRow | null>(null);
+  const [terminateOpen, setTerminateOpen] = useState(false);
 
   function requestPowerAction(machine: MachineRow, action: "start" | "stop") {
     if (action === "stop") {
@@ -292,6 +294,19 @@ export default function MachinesPage() {
     setRebootTarget(machine);
     setRebootOpen(true);
   }
+
+  function requestTerminate(machine: MachineRow) {
+    setTerminateTarget(machine);
+    setTerminateOpen(true);
+  }
+
+  async function confirmTerminate() {
+    const machine = terminateTarget;
+    setTerminateOpen(false);
+    setTerminateTarget(null);
+    if (machine) await performAction(machine, "terminate");
+  }
+
   async function confirmStop() {
     const machine = stopTarget;
     setStopOpen(false);
@@ -507,6 +522,14 @@ export default function MachinesPage() {
                               </>
                             )}
                             <Button
+                              variant="danger"
+                              size="sm"
+                              isDisabled={actionPendingId === machine.id}
+                              onPress={() => requestTerminate(machine)}
+                            >
+                              終止
+                            </Button>
+                            <Button
                               variant="ghost"
                               size="sm"
                               isDisabled={actionPendingId === machine.id}
@@ -669,6 +692,25 @@ export default function MachinesPage() {
             <Modal.Footer>
               <Button variant="secondary" onPress={() => setRebootOpen(false)}>取消</Button>
               <Button onPress={confirmReboot}>重啟</Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
+      {/* 確認終止（不可逆，終止後同步移除清單記錄） */}
+      <Modal.Root isOpen={terminateOpen} onOpenChange={setTerminateOpen}>
+        <Modal.Backdrop>
+        <Modal.Container size="sm" placement="center">
+          <Modal.Dialog>
+            <Modal.Header>
+              <Modal.Heading>確認終止機器</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body>
+              確定要終止「{terminateTarget?.name}」嗎？這將永久刪除 AWS 上的 EC2 執行個體及其根磁碟，<strong>無法復原</strong>。終止成功後該機器將自動從清單移除。
+            </Modal.Body>
+            <Modal.Footer>
+              <Button variant="secondary" onPress={() => setTerminateOpen(false)}>取消</Button>
+              <Button variant="danger" onPress={confirmTerminate}>終止</Button>
             </Modal.Footer>
           </Modal.Dialog>
         </Modal.Container>

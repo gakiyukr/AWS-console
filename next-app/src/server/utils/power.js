@@ -200,14 +200,22 @@ export async function listRegionInstances(env, region) {
 }
 
 /**
- * 對單一機器送出電源操作。僅接受 start|stop|reboot，其餘動作一律拒絕，
- * 避免任意 Action 字串注入 AWS API。
+ * 對單一機器送出電源操作。僅接受 start|stop|reboot|terminate，其餘動作
+ * 一律拒絕，避免任意 Action 字串注入 AWS API。terminate 為不可逆操作，
+ * 呼叫端須自行確保已取得使用者確認，並在成功後清理 D1 清單記錄。
  */
+const POWER_API_ACTIONS = {
+  start: "StartInstances",
+  stop: "StopInstances",
+  reboot: "RebootInstances",
+  terminate: "TerminateInstances",
+};
+
 export async function performPowerAction(env, machine, action) {
-  if (action !== "start" && action !== "stop" && action !== "reboot") {
+  const apiAction = POWER_API_ACTIONS[action];
+  if (!apiAction) {
     throw new Error("Unsupported action");
   }
-  const apiAction = action === "reboot" ? "RebootInstances" : (action === "start" ? "StartInstances" : "StopInstances");
   await ec2Query(
     machine.region,
     env,

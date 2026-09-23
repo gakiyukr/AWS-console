@@ -18,6 +18,11 @@
         "name": "next"
       }
     ],
+    // Cloudflare Workers 全域型別（D1Database、Fetcher 等），供
+    // cloudflare-env.d.ts 與 CloudflareEnv 使用。未列出時這些全域型別
+    // 不存在，只能靠 skipLibCheck 掩蓋；Next.js 的型別由 next-env.d.ts
+    // 的 /// reference 自行引入，不需在此重複。
+    "types": ["@cloudflare/workers-types"],
     "paths": {
       "@/*": ["./src/*"]
     }

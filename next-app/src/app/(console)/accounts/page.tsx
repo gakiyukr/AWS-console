@@ -10,7 +10,7 @@ import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
 import { Modal } from "@heroui/react/modal";
-import { readError, toastDanger } from "@/lib/api-client";
+import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 
 interface AwsAccount {
@@ -80,7 +80,7 @@ export default function AccountsPage() {
     try {
       const response = await fetch("/api/accounts");
       if (!response.ok) throw new Error(await readError(response));
-      const payload = await response.json();
+      const payload = await readJson<{ accounts: AwsAccount[] }>(response);
       setAccounts(payload.accounts);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入帳號資料失敗");
@@ -199,7 +199,7 @@ export default function AccountsPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      const payload = await response.json();
+      const payload = await readJson<{ regions?: AccountRegion[] }>(response);
       setAccountRegions(payload.regions || []);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入區域清單失敗");
@@ -220,7 +220,7 @@ export default function AccountsPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      const payload = await response.json();
+      const payload = await readJson<{ message?: string }>(response);
       toast.success(payload?.message || `已送出開通 ${region} 的請求`);
       await loadAccountRegions(regionAccount.id);
     } catch (error) {

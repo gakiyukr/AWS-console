@@ -13,7 +13,7 @@ import { Input } from "@heroui/react/input";
 import { Modal } from "@heroui/react/modal";
 import { Table } from "@/components/table-lazy";
 import { NoSsr } from "@/components/no-ssr";
-import { readError, toastDanger } from "@/lib/api-client";
+import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 
 // 機器列資料結構：D1 清單 × DescribeInstances 即時狀態合併後的結果
@@ -93,7 +93,7 @@ export default function MachinesPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      setMachines(await response.json());
+      setMachines(await readJson<MachineRow[]>(response));
     } catch {
       toastDanger("載入機器清單失敗");
     }
@@ -118,7 +118,7 @@ export default function MachinesPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      setMachines(await response.json());
+      setMachines(await readJson<MachineRow[]>(response));
     } finally {
       setRefreshing(false);
     }
@@ -168,7 +168,7 @@ export default function MachinesPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      const payload = await response.json();
+      const payload = await readJson<{ accounts: AwsAccountOption[] }>(response);
       const enabled: AwsAccountOption[] = payload.accounts.filter(
         (account: AwsAccountOption) => account.enabled,
       );
@@ -196,7 +196,7 @@ export default function MachinesPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      const payload = await response.json();
+      const payload = await readJson<{ regions?: string[] }>(response);
       setRegions(payload.regions || []);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入 Region 失敗");
@@ -215,7 +215,7 @@ export default function MachinesPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      const payload = await response.json();
+      const payload = await readJson<{ instances?: InstanceOption[] }>(response);
       setInstances(payload.instances || []);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入執行個體清單失敗");

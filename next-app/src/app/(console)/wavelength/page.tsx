@@ -9,7 +9,7 @@ import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
-import { readError, toastDanger } from "@/lib/api-client";
+import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
@@ -131,7 +131,7 @@ export default function WavelengthPage() {
     try {
       const response = await fetch("/api/ssh-keys");
       if (!response.ok) throw new Error("載入 SSH 公鑰失敗");
-      const payload = await response.json();
+      const payload = await readJson<{ keys?: SshPublicKeyOption[] }>(response);
       const keys: SshPublicKeyOption[] = payload.keys || [];
       setSshKeys(keys);
       updateForm({
@@ -153,7 +153,7 @@ export default function WavelengthPage() {
     try {
       const response = await fetch(`/api/wavelength/regions?account_id=${accountId}`);
       if (!response.ok) throw new Error("載入 Wavelength Region 失敗");
-      const payload = await response.json();
+      const payload = await readJson<{ regions?: string[] }>(response);
       setRegions(payload.regions || []);
     } catch {
       toastDanger("載入 Wavelength Region 失敗");
@@ -168,7 +168,7 @@ export default function WavelengthPage() {
         fetch("/api/wavelength/os-options"),
       ]);
       if (!accountResponse.ok) throw new Error("載入 AWS 帳號失敗");
-      const accountPayload = await accountResponse.json();
+      const accountPayload = await readJson<{ accounts: AwsAccountOption[] }>(accountResponse);
       const enabled: AwsAccountOption[] = accountPayload.accounts.filter(
         (account: AwsAccountOption) => account.enabled,
       );
@@ -190,11 +190,11 @@ export default function WavelengthPage() {
         if (!regionResponse.ok) {
           throw new Error("載入 Wavelength Region 失敗");
         }
-        const regionPayload = await regionResponse.json();
+        const regionPayload = await readJson<{ regions?: string[] }>(regionResponse);
         setRegions(regionPayload.regions || []);
       }
       if (!osResponse.ok) throw new Error("載入作業系統選項失敗");
-      const osPayload = await osResponse.json();
+      const osPayload = await readJson<{ os?: SelectOption[] }>(osResponse);
       const os: SelectOption[] = osPayload.os || [];
       setOsOptions(os);
       updateForm({ os: os[0]?.value || "" });
@@ -232,8 +232,8 @@ export default function WavelengthPage() {
         fetch(`/api/wavelength/vpcs?account_id=${form.accountId}&region=${encodeURIComponent(region)}`),
       ]);
       if (!zoneResponse.ok || !vpcResponse.ok) throw new Error("載入 Zone 或 VPC 失敗");
-      const zonePayload = await zoneResponse.json();
-      const vpcPayload = await vpcResponse.json();
+      const zonePayload = await readJson<{ zones?: string[] }>(zoneResponse);
+      const vpcPayload = await readJson<{ vpcs?: SelectOption[] }>(vpcResponse);
       setZones(zonePayload.zones || []);
       setVpcs(vpcPayload.vpcs || []);
     } catch {
@@ -254,7 +254,7 @@ export default function WavelengthPage() {
         `/api/wavelength/instance-types?account_id=${form.accountId}&region=${encodeURIComponent(form.region)}&zone=${encodeURIComponent(zone)}`,
       );
       if (!response.ok) throw new Error("載入執行個體類型失敗");
-      const payload = await response.json();
+      const payload = await readJson<{ instance_types?: string[] }>(response);
       // 切換 Zone 會併發多個請求，較慢的舊回應不得覆蓋新選擇
       if (requestId !== instanceTypesRequestId.current) return;
       const types: string[] = payload.instance_types || [];
@@ -295,7 +295,7 @@ export default function WavelengthPage() {
         `/api/wavelength/instances?account_id=${form.accountId}&region=${encodeURIComponent(form.region)}&zone=${encodeURIComponent(zone)}&vpc_id=${encodeURIComponent(vpcId)}`,
       );
       if (!response.ok) throw new Error("載入既有 Wavelength 執行個體失敗");
-      const payload = await response.json();
+      const payload = await readJson<{ instances?: ExistingInstance[] }>(response);
       const instances: ExistingInstance[] = payload.instances || [];
       setExistingInstances(instances);
       updateForm({ existingInstanceId: instances[0]?.instance_id || "" });
@@ -339,7 +339,7 @@ export default function WavelengthPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
-      const data = await response.json();
+      const data = await readJson<Record<string, unknown>>(response);
       setResult(data);
       appendProgress(success, data);
       toast.success(success);

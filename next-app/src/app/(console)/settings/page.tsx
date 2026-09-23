@@ -8,7 +8,7 @@ import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
-import { readError, toastDanger } from "@/lib/api-client";
+import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
 
 // 尾段自由文字（email、主機名等）作為備註顯示
@@ -37,8 +37,8 @@ export default function SettingsPage() {
     try {
       const response = await fetch("/api/ssh-keys");
       if (!response.ok) throw new Error("載入公鑰清單失敗");
-      const payload = await response.json();
-      setKeys(payload.keys);
+      const payload = await readJson<{ keys?: SshPublicKeyOption[] }>(response);
+      setKeys(payload.keys || []);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入公鑰清單失敗");
     } finally {

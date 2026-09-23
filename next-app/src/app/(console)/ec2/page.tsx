@@ -8,7 +8,7 @@ import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
-import { toastDanger } from "@/lib/api-client";
+import { readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
@@ -89,7 +89,7 @@ export default function Ec2Page() {
     try {
       const response = await fetch("/api/ssh-keys");
       if (!response.ok) throw new Error("載入 SSH 公鑰失敗");
-      const payload = await response.json();
+      const payload = await readJson<{ keys?: SshPublicKeyOption[] }>(response);
       const keys: SshPublicKeyOption[] = payload.keys || [];
       setSshKeys(keys);
       setForm(previous => ({
@@ -112,7 +112,7 @@ export default function Ec2Page() {
     try {
       const response = await fetch(`/api/ec2/regions?account_id=${accountId}`);
       if (!response.ok) throw new Error("載入 EC2 Region 失敗");
-      const payload = await response.json();
+      const payload = await readJson<{ regions?: string[] }>(response);
       setRegions(payload.regions || []);
     } catch {
       toastDanger("載入 EC2 Region 失敗");
@@ -129,8 +129,8 @@ export default function Ec2Page() {
       if (!accountResponse.ok || !osResponse.ok) {
         throw new Error("載入 EC2 部署選項失敗");
       }
-      const accountPayload = await accountResponse.json();
-      const osPayload = await osResponse.json();
+      const accountPayload = await readJson<{ accounts: AwsAccountOption[] }>(accountResponse);
+      const osPayload = await readJson<{ os?: SelectOption[] }>(osResponse);
       const enabled: AwsAccountOption[] = accountPayload.accounts.filter(
         (account: AwsAccountOption) => account.enabled,
       );
@@ -165,7 +165,7 @@ export default function Ec2Page() {
     try {
       const response = await fetch(`/api/ec2/vpcs?account_id=${accountId}&region=${encodeURIComponent(region)}`);
       if (!response.ok) throw new Error("載入 VPC 失敗");
-      const payload = await response.json();
+      const payload = await readJson<{ vpcs?: SelectOption[] }>(response);
       setVpcs(payload.vpcs || []);
     } catch {
       toastDanger("載入 VPC 失敗");

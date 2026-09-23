@@ -83,9 +83,14 @@ function SetupContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-      const body = await response.json();
+      const body = await response.json() as {
+        ok?: boolean
+        reason?: string
+        issuer?: string
+        error?: string
+      };
       if (systemFailureReason(response.status, body.reason)) {
-        router.push(`/503?reason=${encodeURIComponent(body.reason)}`);
+        router.push(`/503?reason=${encodeURIComponent(body.reason ?? "")}`);
         return;
       }
       setTestResult(
@@ -111,15 +116,19 @@ function SetupContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-      const body = await response.json();
+      const body = await response.json() as {
+        reason?: string
+        error?: string
+        redirectUrl?: string
+      };
       if (systemFailureReason(response.status, body.reason)) {
-        router.push(`/503?reason=${encodeURIComponent(body.reason)}`);
+        router.push(`/503?reason=${encodeURIComponent(body.reason ?? "")}`);
         return;
       }
       if (!response.ok) {
         throw new Error(body.error || "無法啟動 SSO 驗證");
       }
-      window.location.href = body.redirectUrl;
+      window.location.href = body.redirectUrl ?? "/";
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "無法啟動 SSO 驗證");
       setStarting(false);

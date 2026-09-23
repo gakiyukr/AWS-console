@@ -9,7 +9,7 @@ import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Table } from "@/components/table-lazy";
 import { NoSsr } from "@/components/no-ssr";
-import { toastDanger } from "@/lib/api-client";
+import { readJson, toastDanger } from "@/lib/api-client";
 
 interface OperationLog {
   id: number
@@ -76,7 +76,7 @@ export default function LogsPage() {
       if (filters.accountId) query.set("account_id", filters.accountId);
       const response = await fetch(`/api/logs?${query.toString()}`);
       if (!response.ok) throw new Error("載入操作日誌失敗");
-      const payload = await response.json();
+      const payload = await readJson<{ logs?: OperationLog[] }>(response);
       setLogs(payload.logs || []);
     } catch {
       toastDanger("載入操作日誌失敗");
@@ -101,7 +101,7 @@ export default function LogsPage() {
       try {
         const response = await fetch("/api/accounts");
         if (!response.ok) throw new Error();
-        const payload = await response.json();
+        const payload = await readJson<{ accounts: AwsAccountOption[] }>(response);
         if (!cancelled) setAccounts(payload.accounts);
       } catch {
         toastDanger("載入 AWS 帳號失敗");

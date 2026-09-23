@@ -317,14 +317,26 @@ export default function WavelengthPage() {
       setLoadingTypes(false);
     }
   }
-  function selectZone(zone: string) {
-    updateForm({ zone });
-    void loadInstanceTypes(zone).then(() => loadExistingInstances());
-  }
+  async function loadExistingInstances() {
+    setExistingInstances([]);
+    updateForm({ existingInstanceId: "" });
+    if (!form.useExistingInstance || !form.region || !form.zone || !form.vpcId) return;
 
-  function toggleUseExistingInstance(checked: boolean) {
-    updateForm({ useExistingInstance: checked });
-    if (checked) void loadExistingInstances();
+    setLoadingInstances(true);
+    try {
+      const response = await fetch(
+        `/api/wavelength/instances?account_id=${form.accountId}&region=${encodeURIComponent(form.region)}&zone=${encodeURIComponent(form.zone)}&vpc_id=${encodeURIComponent(form.vpcId)}`,
+      );
+      if (!response.ok) throw new Error("載入既有 Wavelength 執行個體失敗");
+      const payload = await response.json();
+      const instances: ExistingInstance[] = payload.instances || [];
+      setExistingInstances(instances);
+      updateForm({ existingInstanceId: instances[0]?.instance_id || "" });
+    } catch {
+      toastDanger("載入既有 Wavelength 執行個體失敗");
+    } finally {
+      setLoadingInstances(false);
+    }
   }
 
   // JSON POST 動作（初始化 Zone）

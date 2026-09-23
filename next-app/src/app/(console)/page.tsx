@@ -287,24 +287,18 @@ export default function MachinesPage() {
     setRebootTarget(machine);
     setRebootOpen(true);
   }
+  async function confirmStop() {
+    const machine = stopTarget;
+    setStopOpen(false);
+    setStopTarget(null);
+    if (machine) await performAction(machine, "stop");
+  }
 
-  async function submitRemove() {
-    const target = removeTarget;
-    if (!target || removing) return;
-    setRemoving(true);
-    try {
-      const response = await fetch(`/api/machines/${target.id}`, { method: "DELETE" });
-      if (!response.ok) {
-        throw new Error(await readError(response));
-      }
-      setRemoveOpen(false);
-      setRemoveTarget(null);
-      await loadMachines();
-    } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "移除失敗");
-    } finally {
-      setRemoving(false);
-    }
+  async function confirmReboot() {
+    const machine = rebootTarget;
+    setRebootOpen(false);
+    setRebootTarget(null);
+    if (machine) await performAction(machine, "reboot");
   }
 
   function requestRebootIp(machine: MachineRow) {

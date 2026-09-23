@@ -95,7 +95,12 @@ async function readEventStream(
   }
   if (buffer.trim()) processBlock(buffer);
   if (finalError) throw new Error(finalError);
-  return finalResult || {};
+  // 後端正常結束必發出 result 或 error；兩者皆無代表連線中途斷開，
+  // 此時不可當成部署成功，否則會顯示綠色成功與空結果。
+  if (!finalResult) {
+    throw new Error("部署連線中斷，未收到最終結果；請至操作日誌確認實際狀態。");
+  }
+  return finalResult;
 }
 
 export default function Ec2Page() {
@@ -188,12 +193,17 @@ export default function Ec2Page() {
       const os: SelectOption[] = osPayload.os || [];
       setAccounts(enabled);
       setOsOptions(os);
+      // 重新載入時保留目前選取的帳號（若仍啟用）；loadRegions 會清空
+      // region/vpc，重新套用預設帳號等於丟掉使用者已完成的選擇。
+      const activeAccount = form.accountId && enabled.some(account => account.id === form.accountId)
+        ? enabled.find(account => account.id === form.accountId) ?? null
+        : firstAccount;
       setForm(previous => ({
         ...previous,
-        accountId: firstAccount?.id ?? null,
+        accountId: activeAccount?.id ?? null,
         os: previous.os || os[0]?.value || "",
       }));
-      if (firstAccount) await loadRegions(firstAccount.id);
+      if (activeAccount) await loadRegions(activeAccount.id);
     } catch {
       toastDanger("載入 EC2 部署選項失敗");
     } finally {
@@ -230,16 +240,12 @@ export default function Ec2Page() {
   }
 
   useEffect(() => {
-    let cancelled = false;
-    // 初始化在 await 之後才寫入 state，cancelled flag 防止卸載後更新
+    // 首次掛載載入帳號、Region、OS 選項與公鑰；載入函式各自管理
+    // loading 狀態與錯誤提示，故此處無需額外的取消旗標。
     async function init() {
       await Promise.all([loadInitialOptions(), loadSshKeys()]);
-      if (cancelled) return;
     }
     void init();
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -18,10 +18,12 @@ interface SetupForm {
   tokenUrl: string
   jwksUrl: string
   clientId: string
+  setupToken: string
   clientSecret: string
 }
 
 const INITIAL_FORM: SetupForm = {
+  setupToken: "",
   email: "",
   issuer: "",
   authorizationUrl: "",
@@ -41,7 +43,7 @@ const CALLBACK_ERRORS: Record<string, string> = {
 };
 
 function systemFailureReason(status: number, reason: unknown): string {
-  return status === 503
+  return status === 503 && reason !== "setup_token_missing"
     ? (typeof reason === "string" ? reason : "authentication_unavailable")
     : "";
 }
@@ -69,7 +71,7 @@ function SetupContent() {
   }
 
   const canSubmit = Boolean(
-    form.email && form.clientId && form.clientSecret
+    form.email && form.setupToken && form.clientId && form.clientSecret
     && (form.issuer || (form.authorizationUrl && form.tokenUrl && form.jwksUrl)),
   );
 
@@ -78,10 +80,14 @@ function SetupContent() {
     setTesting(true);
     setTestResult(null);
     try {
+      const { setupToken, ...setupConfig } = form;
       const response = await fetch("/api/setup/test", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        headers: {
+          "Content-Type": "application/json",
+          "X-Setup-Token": setupToken,
+        },
+        body: JSON.stringify(setupConfig),
       });
       const body = await response.json() as {
         ok?: boolean
@@ -111,10 +117,14 @@ function SetupContent() {
     if (starting || !testedOk) return;
     setStarting(true);
     try {
+      const { setupToken, ...setupConfig } = form;
       const response = await fetch("/api/setup/start", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        headers: {
+          "Content-Type": "application/json",
+          "X-Setup-Token": setupToken,
+        },
+        body: JSON.stringify(setupConfig),
       });
       const body = await response.json() as {
         reason?: string
@@ -147,6 +157,22 @@ function SetupContent() {
 
         <Card>
           <Card.Content className="grid gap-4 p-6">
+            <div className="grid gap-2">
+              <label htmlFor="setup-access-token" className="text-sm font-medium">Setup Token</label>
+              <Input
+                id="setup-access-token"
+                type="password"
+                placeholder="Worker 的 SETUP_TOKEN"
+                autoComplete="off"
+                disabled={testing || starting}
+                value={form.setupToken}
+                onChange={(event) => updateField("setupToken", event.target.value)}
+              />
+              <p className="text-xs text-muted">
+                部署時設定於 Worker secrets；至少 32 bytes，僅用於授權首次設定，不會寫入 D1。
+              </p>
+            </div>
+
             <div className="grid gap-2">
               <label htmlFor="setup-email" className="text-sm font-medium">綁定 email</label>
               <Input

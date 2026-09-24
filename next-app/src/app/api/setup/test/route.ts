@@ -2,11 +2,19 @@
 // metadata（discovery 或明確端點），回傳可顯示的結果。僅在尚未設定
 // 時可用；https 以外的 URL 會被 normalizeSetupInput 拒絕。
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
-import { getOidcConfigurationStatus, probeOidcSetup } from "@/server/utils/oidc.js";
 import { getEnv } from "@/server/env";
+import { getOidcConfigurationStatus, probeOidcSetup } from "@/server/utils/oidc.js";
+import { checkSetupToken } from "@/server/utils/setup-token.js";
 
 export async function POST(request: Request): Promise<Response> {
   const env = await getEnv();
+  const tokenStatus = await checkSetupToken(request, env);
+  if (tokenStatus === "unconfigured") {
+    return jsonResponse({ error: "伺服器尚未設定 SETUP_TOKEN。", reason: "setup_token_missing" }, { status: 503 });
+  }
+  if (tokenStatus === "invalid") {
+    return errorResponse(403, "Setup Token 無效。");
+  }
   const oidcStatus = await getOidcConfigurationStatus(env);
   if (oidcStatus.state === "error" || !env?.SESSION_SECRET) {
     return jsonResponse({

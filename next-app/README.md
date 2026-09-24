@@ -42,7 +42,7 @@ next-app/
   - **務必先刪除 `.open-next`**：Workers Builds 會還原上次的建置快取，在殘留產物上增量打包會產出執行時 Server Components 500 的壞 bundle。
 - 部署命令：`npx wrangler deploy`
 
-部署目標（Worker 名稱 `aws-console`、正式 D1、service binding）定義在 `wrangler.jsonc`；同名部署搭配 `keep_vars` 會保留 Worker secrets（`SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY`），正式資料原樣沿用。
+部署目標（Worker 名稱 `aws-console`、正式 D1、service binding）定義在 `wrangler.jsonc`；同名部署搭配 `keep_vars` 會保留 Worker secrets（`SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY`、`SETUP_TOKEN`），正式資料原樣沿用。
 
 套用 D1 migrations（僅在 schema 變更時需要）：
 
@@ -82,13 +82,13 @@ pnpm exec opennextjs-cloudflare build
 
 全新部署後開啟網站會自動進入 `/setup` 初始設定精靈：
 
-1. 填入**綁定 email**（完成驗證後僅此 email 能登入）與 IdP 資訊（Discovery URL，或三個明確端點）、Client ID／Secret。
-2. 「測試連線」會解析 IdP metadata 驗證設定。
+1. 先設定 Worker 的 `SETUP_TOKEN` secret，再於頁面輸入相同的 **Setup Token**、綁定 email（完成驗證後僅此 email 能登入）與 IdP 資訊（Discovery URL，或三個明確端點）、Client ID／Secret。
+2. 「測試連線」會先驗證 Setup Token，再解析 IdP metadata 驗證設定。
 3. 「開始 SSO 驗證」會先把表單設定加密暫存至 D1，再導向 IdP 完成一次真實登入；**回頭的 email 與綁定 email 一致**時才提升為正式設定，並直接登入主控台。
 
 瀏覽器的 `oidc_state` Cookie 只保存隨機 pending ID、state、nonce 與 PKCE verifier，不保存 Client Secret 或其他 OIDC 設定。pending 設定使用獨立 AES-GCM AAD 加密，10 分鐘後失效。
 
-只有 `DB` binding、D1 migration、`SESSION_SECRET` 與 `CREDENTIAL_ENCRYPTION_KEY` 均正常，且 D1 確實沒有 SSO 設定資料列時才會進入 OOBE。基礎設施或解密失敗會顯示 `/503` 診斷頁，不會要求重新設定 SSO。
+只有 `DB` binding、D1 migration、`SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 與 `SETUP_TOKEN` 均正常，且 D1 確實沒有 SSO 設定資料列時才會進入 OOBE。基礎設施或解密失敗會顯示 `/503` 診斷頁；缺少 Setup Token 會在設定表單顯示錯誤，不會要求重新設定 SSO。
 
 設定完成後 `/setup` 會封鎖；重新設定需清除 D1 設定：
 
@@ -115,12 +115,14 @@ pnpm exec wrangler d1 execute DB --remote --command "DELETE FROM sso_config"
 ```bash
 pnpm exec wrangler secret put SESSION_SECRET
 pnpm exec wrangler secret put CREDENTIAL_ENCRYPTION_KEY
+pnpm exec wrangler secret put SETUP_TOKEN
 ```
 
 - `SESSION_SECRET`：簽署登入 session（HMAC-SHA256），輪替後所有既有 session 失效。
 - `CREDENTIAL_ENCRYPTION_KEY`：32 位元組 Base64 AES 主金鑰。遺失或更換後，既有 AWS 憑證無法解密。
+- `SETUP_TOKEN`：授權 OOBE 測試與 SSO 啟動，至少 32 bytes；不寫入 D1、設定 Cookie 或 API 回應。設定完成後可從 Worker secrets 刪除，後續請求會因未設定而 fail closed。
 
-`OIDC_CLIENT_SECRET` 由 OOBE 流程加密存入 D1；`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_ALLOWED_EMAILS` 等非機密設定以 Dashboard 的環境變數（vars）保存即可。可在本機產生隨機 secret：
+`OIDC_CLIENT_SECRET` 由 OOBE 流程加密存入 D1；`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_ALLOWED_EMAILS` 等非機密設定以 Dashboard 的環境變數（vars）保存即可。可用下列命令產生 `SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 或 `SETUP_TOKEN` 所需的隨機值：
 
 ```bash
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"

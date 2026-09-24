@@ -88,7 +88,7 @@ pnpm exec opennextjs-cloudflare build
 
 瀏覽器的 `oidc_state` Cookie 只保存隨機 pending ID、state、nonce 與 PKCE verifier，不保存 Client Secret 或其他 OIDC 設定。pending 設定使用獨立 AES-GCM AAD 加密，10 分鐘後失效。
 
-只有 `DB` binding、D1 migration、`SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 與 `SETUP_TOKEN` 均正常，且 D1 確實沒有 SSO 設定資料列時才會進入 OOBE。基礎設施或解密失敗會顯示 `/503` 診斷頁；缺少 Setup Token 會在設定表單顯示錯誤，不會要求重新設定 SSO。
+只有 `DB` binding、D1 migration、`SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 與 `SETUP_TOKEN` 均正常，且 D1 確實沒有 SSO 設定資料列時才會進入 OOBE。缺少或過短 `SETUP_TOKEN` 時，`/setup` 會在伺服端轉向 `/503` 診斷頁；基礎設施與解密失敗則沿用既有 `/503` 診斷流程，且不會要求重新設定 SSO。
 
 設定完成後 `/setup` 會封鎖；重新設定需清除 D1 設定：
 

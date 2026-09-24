@@ -7,6 +7,11 @@ async function sha256(value) {
   return new Uint8Array(digest);
 }
 
+export function isSetupTokenConfigured(env) {
+  const configuredToken = typeof env.SETUP_TOKEN === "string" ? env.SETUP_TOKEN : "";
+  return new TextEncoder().encode(configuredToken).byteLength >= MIN_SETUP_TOKEN_BYTES;
+}
+
 /**
  * 驗證首次設定權杖。
  * @param {Request} request
@@ -14,11 +19,10 @@ async function sha256(value) {
  * @returns {Promise<"unconfigured" | "invalid" | "valid">}
  */
 export async function checkSetupToken(request, env) {
-  const configuredToken = typeof env.SETUP_TOKEN === "string" ? env.SETUP_TOKEN : "";
-  if (new TextEncoder().encode(configuredToken).byteLength < MIN_SETUP_TOKEN_BYTES) {
+  if (!isSetupTokenConfigured(env)) {
     return "unconfigured";
   }
-
+  const configuredToken = env.SETUP_TOKEN;
   const providedToken = request.headers.get("x-setup-token") || "";
   if (!providedToken) return "invalid";
 

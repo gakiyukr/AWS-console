@@ -265,6 +265,7 @@ export default function MachinesPage() {
   const [rebootOpen, setRebootOpen] = useState(false);
   const [rebootIpTarget, setRebootIpTarget] = useState<MachineRow | null>(null);
   const [rebootIpOpen, setRebootIpOpen] = useState(false);
+  const [rebootIpPending, setRebootIpPending] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<MachineRow | null>(null);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -318,16 +319,21 @@ export default function MachinesPage() {
 
   async function confirmRebootIp() {
     const machine = rebootIpTarget;
+    if (!machine || actionPendingId !== null || rebootIpPending) return;
     setRebootIpOpen(false);
     setRebootIpTarget(null);
-    if (!machine) return;
+    setRebootIpPending(true);
+    setActionPendingId(machine.id);
     try {
       const response = await fetch(`/api/machines/${machine.id}/reboot-ip`, { method: "POST" });
       if (!response.ok) throw new Error(await readError(response));
       toast.success("已送出停止→啟動請求（將更換公網 IP）。");
-      await loadMachines();
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "更換 IP 失敗");
+    } finally {
+      await loadMachines();
+      setRebootIpPending(false);
+      setActionPendingId(null);
     }
   }
   async function submitRemove() {
@@ -496,7 +502,7 @@ export default function MachinesPage() {
                                 <Button
                                   variant="secondary"
                                   size="sm"
-                                  isDisabled={actionPendingId === machine.id}
+                                  isDisabled={actionPendingId !== null || rebootIpPending}
                                   onPress={() => requestRebootIp(machine)}
                                 >
                                   更換 IP
@@ -723,7 +729,7 @@ export default function MachinesPage() {
             </Modal.Body>
             <Modal.Footer>
               <Button variant="secondary" onPress={() => setRebootIpOpen(false)}>取消</Button>
-              <Button onPress={confirmRebootIp}>更換 IP</Button>
+              <Button isDisabled={rebootIpPending} onPress={confirmRebootIp}>更換 IP</Button>
             </Modal.Footer>
           </Modal.Dialog>
         </Modal.Container>

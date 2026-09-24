@@ -7,6 +7,7 @@ const eslintConfig = defineConfig([
   ...nextTs,
   // 保留 Next.js 預設忽略項目，避免檢查建置產物與自動產生型別。
   globalIgnores([
+    ".wrangler/**",
     ".next/**",
     ".open-next/**",
     "out/**",

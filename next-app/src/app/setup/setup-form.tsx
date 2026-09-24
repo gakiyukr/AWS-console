@@ -69,8 +69,9 @@ function SetupContent() {
   }
 
   const canSubmit = Boolean(
-    form.email && form.setupToken && form.clientId && form.clientSecret
-    && (form.issuer || (form.authorizationUrl && form.tokenUrl && form.jwksUrl)),
+    form.email && form.setupToken && form.issuer && form.clientId && form.clientSecret
+    && (!form.authorizationUrl && !form.tokenUrl && !form.jwksUrl
+      || Boolean(form.authorizationUrl && form.tokenUrl && form.jwksUrl)),
   );
 
   async function testConnection() {

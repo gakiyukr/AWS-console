@@ -22,13 +22,25 @@ function delay(ms: number): Promise<void> {
   return promise;
 }
 
-async function waitForInstanceStopped(region: string, awsEnv: Parameters<typeof ec2Query>[1], instanceId: string): Promise<boolean> {
+async function describeInstance(
+  region: string,
+  awsEnv: Parameters<typeof ec2Query>[1],
+  instanceId: string,
+) {
+  const xml = await ec2Query(region, awsEnv, "DescribeInstances", {
+    "InstanceId.1": instanceId,
+  });
+  return parseInstanceDescription(xml);
+}
+
+async function waitForInstanceStopped(
+  region: string,
+  awsEnv: Parameters<typeof ec2Query>[1],
+  instanceId: string,
+): Promise<boolean> {
   for (let attempt = 0; attempt < STOP_POLL_MAX_ATTEMPTS; attempt += 1) {
     await delay(STOP_POLL_INTERVAL_MS);
-    const xml = await ec2Query(region, awsEnv, "DescribeInstances", {
-      "InstanceId.1": instanceId,
-    });
-    const instance = parseInstanceDescription(xml);
+    const instance = await describeInstance(region, awsEnv, instanceId);
     if (instance.instanceId === instanceId && instance.state === "stopped") {
       return true;
     }
@@ -55,22 +67,64 @@ export async function POST(
     return errorResponse(400, "指定的機器不在清單內。");
   }
 
+  let stopRequested = false;
+  let awsEnv: Awaited<ReturnType<typeof resolveAwsAccount>>["awsEnv"] | null = null;
+  let recoveryRequested = false;
   try {
-    const { awsEnv } = await resolveAwsAccount(env, machine.awsAccountId);
+    ({ awsEnv } = await resolveAwsAccount(env, machine.awsAccountId));
+    const before = await describeInstance(machine.region, awsEnv, machine.instanceId);
+    if (before.instanceId !== machine.instanceId || before.state !== "running") {
+      return errorResponse(409, "執行個體必須處於 running 狀態才能更換公網 IP。");
+    }
 
     await ec2Query(machine.region, awsEnv, "StopInstances", {
       "InstanceId.1": machine.instanceId,
     });
+    stopRequested = true;
 
     const stopped = await waitForInstanceStopped(machine.region, awsEnv, machine.instanceId);
     if (!stopped) {
-      throw new Error("執行個體未在時限內進入 stopped 狀態，已中止更換 IP；請稍後手動啟動。");
+      throw new Error("等待執行個體停止逾時");
     }
 
     await ec2Query(machine.region, awsEnv, "StartInstances", {
       "InstanceId.1": machine.instanceId,
     });
+    recoveryRequested = true;
+  } catch (error) {
+    if (stopRequested && !recoveryRequested && awsEnv) {
+      try {
+        await ec2Query(machine.region, awsEnv, "StartInstances", {
+          "InstanceId.1": machine.instanceId,
+        });
+        recoveryRequested = true;
+      } catch {
+        // 原操作失敗時，恢復啟動也可能因狀態尚未就緒而失敗。
+      }
+    }
 
+    try {
+      await appendOperationLog(env.DB, {
+        action: "reboot-ip",
+        region: machine.region,
+        instanceId: machine.instanceId,
+        status: "failure",
+        detail: recoveryRequested ? "reboot_ip_failed_recovery_requested" : "reboot_ip_failed_instance_may_be_stopped",
+        awsAccountId: machine.awsAccountId,
+      });
+    } catch {
+      // 日誌寫入失敗不影響錯誤回應
+    }
+    const httpError = toHttpError(error);
+    const message = stopRequested
+      ? recoveryRequested
+        ? "更換公網 IP 未完成；已送出恢復啟動請求，請確認執行個體狀態。"
+        : "更換公網 IP 未完成，且自動重新啟動未成功；請確認執行個體狀態後手動啟動。"
+      : "執行個體操作失敗。";
+    return errorResponse(httpError.status, message);
+  }
+
+  try {
     await appendOperationLog(env.DB, {
       action: "reboot-ip",
       region: machine.region,
@@ -79,25 +133,12 @@ export async function POST(
       detail: null,
       awsAccountId: machine.awsAccountId,
     });
-
-    return jsonResponse({
-      ok: true,
-      message: "已停止並重新啟動，公網 IP 將更換。",
-    });
-  } catch (error) {
-    try {
-      await appendOperationLog(env.DB, {
-        action: "reboot-ip",
-        region: machine.region,
-        instanceId: machine.instanceId,
-        status: "failure",
-        detail: "reboot_ip_failed",
-        awsAccountId: machine.awsAccountId,
-      });
-    } catch {
-      // 日誌寫入失敗不影響錯誤回應
-    }
-    const httpError = toHttpError(error);
-    return errorResponse(httpError.status, "執行個體操作失敗。");
+  } catch {
+    // AWS 操作已成功時，稽核日誌失敗不應回報操作失敗。
   }
+
+  return jsonResponse({
+    ok: true,
+    message: "已停止並重新啟動，公網 IP 將更換。",
+  });
 }

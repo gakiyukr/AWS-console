@@ -92,7 +92,11 @@ export function getCookieFromRequest(request, name) {
   for (const cookie of cookies) {
     const [key, ...rest] = cookie.split("=");
     if (key === name) {
-      return decodeURIComponent(rest.join("="));
+      try {
+        return decodeURIComponent(rest.join("="));
+      } catch {
+        return null;
+      }
     }
   }
   return null;

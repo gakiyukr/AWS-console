@@ -4,7 +4,7 @@
 //
 // 命名慣例：parseXxxItems / parseXxxXml 回傳陣列；parseCreatedXxx 回傳
 // 建立資源後取得的識別字；findTagValue 供解析 tagSet 內的具名標籤。
-import { childrenNamed, firstChildNamed, firstText, parseXml } from "./xml.js";
+import { allTexts, childrenNamed, firstChildNamed, firstText, parseXml } from "./xml.js";
 
 function findTagValue(node, key) {
   for (const tagNode of childrenNamed(node, "tagSet")) {

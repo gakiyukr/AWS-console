@@ -1,8 +1,9 @@
 // POST /api/machines/:id/reboot-ip：連續執行 stop → 輪詢等待停止 → start，
 // 藉 Stop/Start 釋放並重新分配公網 IP（RebootInstances 不會換 IP）。
-import { errorResponse, jsonResponse } from "@/server/utils/http.js";
+import { errorResponse, jsonResponse, toHttpError } from "@/server/utils/http.js";
 import { appendOperationLog, getMachineById } from "@/server/utils/db.js";
 import { ec2Query } from "@/server/utils/aws-query.js";
+import { parseInstanceDescription } from "@/server/utils/ec2-xml.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
@@ -27,9 +28,8 @@ async function waitForInstanceStopped(region: string, awsEnv: Parameters<typeof 
     const xml = await ec2Query(region, awsEnv, "DescribeInstances", {
       "InstanceId.1": instanceId,
     });
-    // 執行個體已終止或查無回應時視為未停止，繼續輪詢由逾時收尾
-    const stateMatch = xml.match(/<instanceState>\s*<name>([^<]+)<\/name>/);
-    if (stateMatch?.[1] === "stopped") {
+    const instance = parseInstanceDescription(xml);
+    if (instance.instanceId === instanceId && instance.state === "stopped") {
       return true;
     }
   }
@@ -91,12 +91,13 @@ export async function POST(
         region: machine.region,
         instanceId: machine.instanceId,
         status: "failure",
-        detail: error instanceof Error ? error.message : String(error),
+        detail: "reboot_ip_failed",
         awsAccountId: machine.awsAccountId,
       });
     } catch {
       // 日誌寫入失敗不影響錯誤回應
     }
-    return errorResponse(500, error instanceof Error ? error.message : "操作失敗。");
+    const httpError = toHttpError(error);
+    return errorResponse(httpError.status, "執行個體操作失敗。");
   }
 }

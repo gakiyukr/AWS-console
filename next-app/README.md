@@ -80,21 +80,23 @@ pnpm exec opennextjs-cloudflare build
 
 ### 首次執行（OOBE 初始設定）
 
-全新部署後開啟網站會自動進入 `/setup` 初始設定精靈：
+若 D1 與必要 Worker 設定正常，且目前沒有可用的 D1／環境變數 OIDC 設定，開啟受保護頁面會自動轉到 `/setup` 初始設定精靈。缺少或過短 `SETUP_TOKEN` 時，`/setup` 會在伺服端轉到 `/503?reason=setup_token_missing`。
 
 1. 先設定 Worker 的 `SETUP_TOKEN` secret，再於頁面輸入相同的 **Setup Token**、綁定 email（完成驗證後僅此 email 能登入）與 IdP 資訊（Discovery URL，或三個明確端點）、Client ID／Secret。
 2. 「測試連線」會先驗證 Setup Token，再解析 IdP metadata 驗證設定。
-3. 「開始 SSO 驗證」會先把表單設定加密暫存至 D1，再導向 IdP 完成一次真實登入；**回頭的 email 與綁定 email 一致**時才提升為正式設定，並直接登入主控台。
+3. 「開始 SSO 驗證」會先把表單設定暫存至 D1，其中只有 Client Secret 以獨立 AAD 加密；OIDC 端點、Client ID 與綁定 email 以一般欄位儲存。之後導向 IdP 完成一次真實登入；**回頭的 email 與綁定 email 一致**時才提升為正式設定，並直接登入主控台。
 
-瀏覽器的 `oidc_state` Cookie 只保存隨機 pending ID、state、nonce 與 PKCE verifier，不保存 Client Secret 或其他 OIDC 設定。pending 設定使用獨立 AES-GCM AAD 加密，10 分鐘後失效。
+瀏覽器的 `oidc_state` Cookie 只保存隨機 pending ID、state、nonce 與 PKCE verifier，不保存 Client Secret 或其他 OIDC 設定。pending 設定中的 Client Secret 使用獨立 AES-GCM AAD 加密，10 分鐘後失效。
 
-只有 `DB` binding、D1 migration、`SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 與 `SETUP_TOKEN` 均正常，且 D1 確實沒有 SSO 設定資料列時才會進入 OOBE。缺少或過短 `SETUP_TOKEN` 時，`/setup` 會在伺服端轉向 `/503` 診斷頁；基礎設施與解密失敗則沿用既有 `/503` 診斷流程，且不會要求重新設定 SSO。
+從受保護頁面啟動 OOBE 的條件是：`DB` binding、D1 migration、`SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 與 `SETUP_TOKEN` 均正常，且 D1 沒有 `sso_config` 設定、也沒有完整的 `OIDC_*` 環境變數設定。基礎設施或解密失敗時，受保護頁面會轉到 `/503` 診斷頁。`/setup` 頁面本身只檢查 Worker `SETUP_TOKEN` 是否存在且至少 32 bytes，因此直接開啟時可能仍會顯示表單。若頁面開啟後 Worker token 被移除或設短，setup API 會回應 503 JSON；若請求缺少或填錯 Setup Token，API 會回應 403，表單會顯示錯誤並留在 `/setup`。
 
-設定完成後 `/setup` 會封鎖；重新設定需清除 D1 設定：
+設定完成後，正常流程會直接登入主控台；`/setup` 本身不會自動封鎖。保留有效 `SETUP_TOKEN` 時，直接開啟 `/setup` 仍可能看到表單，但提交 API 會因已有設定而回應 `409`；刪除 `SETUP_TOKEN` 後則會轉到 `/503`。若要重新設定，先停用或移除完整的 `OIDC_*` 環境變數，再清除正式與 pending 設定：
 
 ```bash
-pnpm exec wrangler d1 execute DB --remote --command "DELETE FROM sso_config"
+pnpm exec wrangler d1 execute DB --remote --command "DELETE FROM sso_config; DELETE FROM pending_sso_setup"
 ```
+
+此外部 SQL 變更不會主動清除 Worker isolate 內最多約 60 秒的 OIDC 狀態快取；等待快取過期後才能再次啟動 OOBE。期間請保留有效的 `SETUP_TOKEN`。
 
 ### 以環境變數設定（替代管道）
 
@@ -104,13 +106,15 @@ pnpm exec wrangler d1 execute DB --remote --command "DELETE FROM sso_config"
 2. 填入 redirect URI：`https://<domain>/api/auth/callback`。
 3. Scopes 勾選 `openid`、`email`、`profile`，建立後取得 client ID 與 client secret。
 4. 建立 Access policy，僅允許自己的 email。
-5. 將頁面上的 OIDC 端點與憑證填入 `OIDC_*` 環境變數（見 `.dev.vars.example`）。
+5. 將頁面上的 OIDC 端點與憑證填入 Worker 的環境變數：`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_ALLOWED_EMAILS` 與 `OIDC_CLIENT_SECRET` 必填；`OIDC_CLIENT_SECRET` 應設為 secret，其餘設為 vars。`.dev.vars.example` 只提供共用的本機測試密鑰，使用此模式時需另加這些 OIDC 變數。
 
 若 IdP 未提供 discovery，改以 `OIDC_AUTHORIZATION_URL`、`OIDC_TOKEN_URL`、`OIDC_JWKS_URL` 明確指定端點即可，登入流程不變。
 
 ## Secrets 與環境變數
 
-正式環境只需保留以下 Cloudflare secrets，不應寫入 D1 或版本庫：
+正式環境的 secrets 依設定模式而異：
+
+OOBE 模式需要：
 
 ```bash
 pnpm exec wrangler secret put SESSION_SECRET
@@ -118,11 +122,20 @@ pnpm exec wrangler secret put CREDENTIAL_ENCRYPTION_KEY
 pnpm exec wrangler secret put SETUP_TOKEN
 ```
 
+以 `OIDC_*` 環境變數替代 OOBE 時，需要將 `SETUP_TOKEN` 換成 `OIDC_CLIENT_SECRET`：
+
+```bash
+pnpm exec wrangler secret put SESSION_SECRET
+pnpm exec wrangler secret put CREDENTIAL_ENCRYPTION_KEY
+pnpm exec wrangler secret put OIDC_CLIENT_SECRET
+```
+
 - `SESSION_SECRET`：簽署登入 session（HMAC-SHA256），輪替後所有既有 session 失效。
 - `CREDENTIAL_ENCRYPTION_KEY`：32 位元組 Base64 AES 主金鑰。遺失或更換後，既有 AWS 憑證無法解密。
-- `SETUP_TOKEN`：授權 OOBE 測試與 SSO 啟動，至少 32 bytes；不寫入 D1、設定 Cookie 或 API 回應。設定完成後可從 Worker secrets 刪除，後續請求會因未設定而 fail closed。
+- `SETUP_TOKEN`：OOBE 模式授權測試連線與啟動 SSO，長度至少 32 bytes；不寫入 D1、設定 Cookie 或 API 回應。設定完成後可刪除，但直接開啟 `/setup` 會轉到 `/503`，不影響既有登入流程。
+- `OIDC_CLIENT_SECRET`：使用 `OIDC_*` 環境變數模式的 IdP 憑證；它必須設定為 Worker secret，不得寫入 D1 或版本庫。
 
-`OIDC_CLIENT_SECRET` 由 OOBE 流程加密存入 D1；`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_ALLOWED_EMAILS` 等非機密設定以 Dashboard 的環境變數（vars）保存即可。可用下列命令產生 `SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 或 `SETUP_TOKEN` 所需的隨機值：
+OOBE 流程會把 Client Secret 以獨立 AAD 加密存入 D1；環境變數模式則直接從 Worker environment 讀取 `OIDC_CLIENT_SECRET`。`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_ALLOWED_EMAILS` 等非機密設定以 Dashboard 的環境變數（vars）保存即可。可用下列命令產生 `SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 或 `SETUP_TOKEN` 所需的隨機值：
 
 ```bash
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"

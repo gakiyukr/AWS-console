@@ -8,7 +8,7 @@
 - 管理 D1 清單內 EC2 執行個體的即時狀態，並執行開機、關機、重啟、終止，
   以及「更換公網 IP」（stop → start）。
 - 建立及初始化 AWS Wavelength Zone 所需的子網、Carrier Gateway、路由表與安全群組。
-- 以獨立工作流部署一般區域 EC2、Wavelength 執行個體與 SSH forwarder。
+- 以獨立工作流部署一般區域 EC2、Wavelength 執行個體、Lightsail 執行個體與 SSH forwarder。
 - 部署成功後自動將建立的執行個體登錄至電源管理清單。
 - 保存電源操作與部署結果的稽核日誌。
 - 在 D1 管理多組 AWS 帳號；AWS Secret 以 AES-256-GCM 加密後儲存。
@@ -20,7 +20,7 @@ next-app/
 ├── src/app/(console)/   # 受保護頁面（layout 內做頁面守衛，一律動態渲染）
 │   ├── page.tsx         # 機器總覽與電源操作
 │   ├── ec2/             # 一般 EC2 部署
-│   ├── wavelength/      # Wavelength 部署
+│   ├── lightsail/        # Lightsail 部署
 │   ├── accounts/        # AWS 帳號管理
 │   ├── logs/            # 稽核日誌
 │   └── settings/        # SSH 公鑰管理
@@ -208,7 +208,7 @@ Security Group 與 `ec2:RunInstances` 等權限；一般 EC2 部署亦需 `ec2:R
 - `/api/accounts`：AWS 帳號與加密憑證管理；`/:id/test` 可驗證憑證，`/:id/regions/enable` 可開通區域。
 - `/api/ssh-keys`：部署用 SSH 公鑰庫的列表、新增（上限 50 把）與刪除。
 - `/api/ec2/*`：一般 EC2 的 Region、VPC、執行個體、作業系統選項與部署流程。
-- `/api/wavelength/*`：Wavelength 探索、初始化與部署流程。
+- `/api/lightsail/*`：Lightsail 的 Region、Blueprint、Bundle 與部署流程。
 - `/api/logs`：可依 `account_id`、`action`、`status`、`limit` 讀取稽核日誌。
 
 所有 `/api` 端點（SSO 登入流程與 session 查詢除外）都要求有效登入 session，

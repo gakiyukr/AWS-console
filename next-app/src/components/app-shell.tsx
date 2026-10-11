@@ -6,11 +6,11 @@ import {
   CloudCog,
   KeyRound,
   Menu,
-  RadioTower,
   ScrollText,
   Server,
   Settings,
   X,
+  Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -19,7 +19,7 @@ import { useState, type ReactNode } from "react";
 const navigation = [
   { href: "/", label: "機器總覽", icon: Activity },
   { href: "/ec2", label: "EC2 部署", icon: Server },
-  { href: "/wavelength", label: "Wavelength 部署", icon: RadioTower },
+  { href: "/lightsail", label: "Lightsail 部署", icon: Zap },
   { href: "/logs", label: "操作日誌", icon: ScrollText },
   { href: "/accounts", label: "帳號管理", icon: KeyRound },
   { href: "/settings", label: "設定", icon: Settings },

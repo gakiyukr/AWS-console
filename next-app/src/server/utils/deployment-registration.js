@@ -17,7 +17,6 @@ function addCandidate(candidates, instanceId, isWavelength) {
  * forwarder 流程同時保留目標 Wavelength 執行個體與新建立的區域型 forwarder。
  */
 function collectDeploymentMachines(deploymentType, result) {
-  const candidates = [];
 
   switch (deploymentType) {
     case "wavelength":
@@ -30,6 +29,9 @@ function collectDeploymentMachines(deploymentType, result) {
     case "forwarder":
       addCandidate(candidates, result?.target_instance_id, true);
       addCandidate(candidates, result?.forwarder?.instance_id, false);
+      break;
+    case "lightsail":
+      addCandidate(candidates, result?.instance_id, false);
       break;
     default:
       throw new Error("不支援的部署類型");

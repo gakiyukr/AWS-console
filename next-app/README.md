@@ -7,6 +7,10 @@
 - 以 OIDC SSO（Authorization Code + PKCE）登入，僅允許清單內的 email 進入主控台。
 - 管理 D1 清單內 EC2 執行個體的即時狀態，並執行開機、關機、重啟、終止，
   以及「更換公網 IP」（stop → start）。
+- 以「分享連結」對外發布免登入的公開網頁，讓訪客對綁定機器一鍵更換公網 IP；
+  可一頁綁一機或多機，冷卻時間由連結自訂（0 表示不限）。
+- 分享頁可自後台開啟 [Cap](https://trycap.dev/) 人機驗證（工作量證明）：
+  訪客點擊「一鍵換 IP」前須先通過驗證，兌換憑證為一次性。
 - 建立及初始化 AWS Wavelength Zone 所需的子網、Carrier Gateway、路由表與安全群組。
 - 以獨立工作流部署一般區域 EC2、Wavelength 執行個體、Lightsail 執行個體與 SSH forwarder。
 - 部署成功後自動將建立的執行個體登錄至電源管理清單。
@@ -23,8 +27,10 @@ next-app/
 │   ├── lightsail/        # Lightsail 部署
 │   ├── accounts/        # AWS 帳號管理
 │   ├── logs/            # 稽核日誌
+│   ├── share/           # 分享連結管理（對外一鍵換 IP）
 │   └── settings/        # SSH 公鑰管理
 ├── src/app/login/、setup/  # 登入頁與 OOBE 初始設定
+├── src/app/share/[token]/  # 公開分享頁（免登入，token 即憑證）
 ├── src/app/api/         # API 路由（見下方「API 範圍」）
 ├── src/server/          # 守衛（page-guard、api-guard）與後端工具層
 ├── src/lib/             # 前後端共用：regions、ssh-keys、deployment-stream
@@ -122,6 +128,12 @@ pnpm exec wrangler secret put CREDENTIAL_ENCRYPTION_KEY
 pnpm exec wrangler secret put SETUP_TOKEN
 ```
 
+若要啟用分享頁的人機驗證，另需（設定後到「分享連結」頁開啟開關）：
+
+```bash
+pnpm exec wrangler secret put CAP_SECRET
+```
+
 以 `OIDC_*` 環境變數替代 OOBE 時，需要將 `SETUP_TOKEN` 換成 `OIDC_CLIENT_SECRET`：
 
 ```bash
@@ -133,6 +145,7 @@ pnpm exec wrangler secret put OIDC_CLIENT_SECRET
 - `SESSION_SECRET`：簽署登入 session（HMAC-SHA256），輪替後所有既有 session 失效。
 - `CREDENTIAL_ENCRYPTION_KEY`：32 位元組 Base64 AES 主金鑰。遺失或更換後，既有 AWS 憑證無法解密。
 - `SETUP_TOKEN`：OOBE 模式授權測試連線與啟動 SSO，長度至少 32 bytes；不寫入 D1、設定 Cookie 或 API 回應。設定完成後可刪除，但直接開啟 `/setup` 會轉到 `/503`，不影響既有登入流程。
+- `CAP_SECRET`（選填）：分享頁人機驗證（Cap）的 JWT 簽章密鑰，至少 16 bytes。僅 challenge/redeem 端點需要；未設定時管理介面的開關無法啟用。輪換會使尚未兌換的 challenge 失效，已兌換憑證（存於 D1）不受影響。
 - `OIDC_CLIENT_SECRET`：使用 `OIDC_*` 環境變數模式的 IdP 憑證；它必須設定為 Worker secret，不得寫入 D1 或版本庫。
 
 OOBE 流程會把 Client Secret 以獨立 AAD 加密存入 D1；環境變數模式則直接從 Worker environment 讀取 `OIDC_CLIENT_SECRET`。`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_ALLOWED_EMAILS` 等非機密設定以 Dashboard 的環境變數（vars）保存即可。可用下列命令產生 `SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 或 `SETUP_TOKEN` 所需的隨機值：
@@ -209,10 +222,24 @@ Security Group 與 `ec2:RunInstances` 等權限；一般 EC2 部署亦需 `ec2:R
 - `/api/ssh-keys`：部署用 SSH 公鑰庫的列表、新增（上限 50 把）與刪除。
 - `/api/ec2/*`：一般 EC2 的 Region、VPC、執行個體、作業系統選項與部署流程。
 - `/api/lightsail/*`：Lightsail 的 Region、Blueprint、Bundle 與部署流程。
+- `/api/share-links`：分享連結（對外一鍵換 IP 公開頁）管理；建立時由伺服端
+  產生 token（明文儲存，URL 即憑證），`/:id` 支援 PATCH（名稱／冷卻／啟停用）
+  與 DELETE。
+- `/api/share/:token/*`：**公開端點（無須登入，token 即憑證）**——`machines`
+  回傳綁定機器的即時狀態與公網 IP（含 `captchaEnabled`）；`rotate` 以 SSE 串流
+  觸發換 IP（stop → start），並輪詢回報新公網 IP。冷卻按「連結×機器」以條件式
+  UPDATE 原子搶鎖強制（429，憑證不消費）；token 無效或連結停用一律 404，不洩漏
+  存在性。人機驗證啟用時，`rotate` 需攜帶有效的 Cap 兌換憑證（`captchaToken`），
+  憑證於搶鎖成功後原子單次消費，無效／已使用回 403。
+- `/api/share/cap/*`：**公開端點**——Cap widget 的 `challenge`（發放 PoW
+  challenge）與 `redeem`（驗證解答、防重放並簽發一次性憑證）。人機驗證未啟用時
+  回 404；啟用但缺 `CAP_SECRET` 時回 503。
+- `/api/share-settings`：分享頁後台設定（守衛保護）——`GET` 回人機驗證開關與
+  `CAP_SECRET` 設置狀態；`PATCH` 更新開關，啟用時要求 secret 已設定（否則 400）。
 - `/api/logs`：可依 `account_id`、`action`、`status`、`limit` 讀取稽核日誌。
 
-所有 `/api` 端點（SSO 登入流程與 session 查詢除外）都要求有效登入 session，
-且 session 內 email 必須在允許清單中。
+所有 `/api` 端點（SSO 登入流程、session 查詢與 `/api/share/:token/*` 公開
+分享端點除外）都要求有效登入 session，且 session 內 email 必須在允許清單中。
 
 ## 部署登入憑證
 
@@ -238,6 +265,10 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
 - `0005_sso_config.sql`：OOBE 初始設定的 SSO 設定表。
 - `0006_ssh_public_keys.sql`：部署用的 SSH 公鑰庫資料表。
 - `0007_pending_sso_setup.sql`：OOBE 驗證前的短效加密設定暫存表。
+- `0008_share_links.sql`：對外一鍵換 IP 的分享連結表與「連結×機器」綁定表
+  （含各綁定的最後觸發時間，作為訪客側冷卻依據）。
+- `0009_app_settings_and_cap.sql`：後台 KV 設定表（人機驗證開關），以及 Cap
+  人機驗證的重放記錄（`cap_nonces`）與一次性兌換憑證（`cap_tokens`）兩張表。
 
 ## 已知建置注意事項
 

@@ -2,6 +2,7 @@
 // ec2Query（SigV4 + 30 秒逾時）。純函式與 AWS 互動集中於此模組，
 // 路由檔僅負責輸入驗證與 D1 存取。
 import { ec2Query } from "./aws-query.js";
+import { parseInstanceDescription } from "./ec2-xml.js";
 
 // 地區查詢失敗或執行個體自回應中消失時，狀態欄位的降級顯示值；
 // 前端直接呈現，用於提醒清單資料可能過期，而非反映真實電源狀態。
@@ -223,4 +224,140 @@ export async function performPowerAction(env, machine, action) {
     { "InstanceId.1": machine.instanceId },
   );
   return { ok: true, action };
+}
+
+// ─── 更換公網 IP（stop → 輪詢 stopped → start） ─────────────
+
+// 輪詢等待執行個體進入 stopped：StopInstances 通常 20–60 秒，
+// 以 3 秒間隔最多 30 次（90 秒）覆蓋常見情境，避免過早 StartInstances 失敗。
+const STOP_POLL_INTERVAL_MS = 3_000;
+const STOP_POLL_MAX_ATTEMPTS = 30;
+
+// 啟動後輪詢新公網 IP 的上限。單次 Worker 呼叫的子請求總數
+// （1 預檢 + 1 stop + 30 stop 輪詢 + 1 start + 15 IP 輪詢 = 48）須低於
+// Cloudflare 免費方案的 50 上限；取不到時由呼叫端提示稍後自行重新整理。
+const NEW_IP_POLL_INTERVAL_MS = 3_000;
+const NEW_IP_POLL_MAX_ATTEMPTS = 15;
+
+function delay(ms) {
+  const { promise, resolve } = Promise.withResolvers();
+  setTimeout(resolve, ms);
+  return promise;
+}
+
+async function describeInstance(region, env, instanceId) {
+  const xml = await ec2Query(region, env, "DescribeInstances", {
+    "InstanceId.1": instanceId,
+  });
+  return parseInstanceDescription(xml);
+}
+
+async function waitForInstanceStopped(region, env, instanceId, onProgress) {
+  for (let attempt = 1; attempt <= STOP_POLL_MAX_ATTEMPTS; attempt += 1) {
+    await delay(STOP_POLL_INTERVAL_MS);
+    const instance = await describeInstance(region, env, instanceId);
+    if (instance.instanceId === instanceId && instance.state === "stopped") {
+      return true;
+    }
+    onProgress("waiting_stopped", { attempt });
+  }
+  return false;
+}
+
+/** 啟動後輪詢新公網 IP；Wavelength 執行個體自公網 DNS 反推。 */
+async function waitForNewPublicIp(machine, env, onProgress) {
+  for (let attempt = 1; attempt <= NEW_IP_POLL_MAX_ATTEMPTS; attempt += 1) {
+    await delay(NEW_IP_POLL_INTERVAL_MS);
+    const instance = await describeInstance(machine.region, env, machine.instanceId);
+    if (instance.instanceId !== machine.instanceId) {
+      continue;
+    }
+    const ipAddress = instance.publicIpAddress || deriveIpFromPublicDns(instance.publicDnsName);
+    if (ipAddress) {
+      onProgress("completed", { ip: ipAddress });
+      return ipAddress;
+    }
+    onProgress("waiting_ip", { attempt });
+  }
+  return null;
+}
+
+/**
+ * 更換機器公網 IP：預檢 running → stop → 輪詢 stopped → start。
+ * 由 reboot-ip 路由與公開分享頁共用；進度經 onProgress(stage, details)
+ * 回報（stage 與前端標籤表對齊），不需要進度的呼叫端省略即可。
+ *
+ * 失敗時若尚未送出 start，先補償性 start 盡量讓機器恢復運行，再拋出
+ * 帶 statusCode（預檢 409 時可直接映射 HTTP）與 precheck／stopRequested／
+ * recoveryRequested 旗標的錯誤，供呼叫端以 rotateIpFailureMessage 組訊息。
+ * @param {unknown} env 已注入 AWS 憑證的執行環境（awsEnv）
+ * @param {{ region: string, instanceId: string }} machine
+ * @param {{ onProgress?: (stage: string, details?: Record<string, unknown>) => void,
+ *   waitForNewIp?: boolean }} [options] waitForNewIp：啟動後輪詢新公網 IP
+ * @returns {Promise<{ newIpAddress: string | null }>}
+ */
+export async function rotatePublicIp(env, machine, { onProgress = () => {}, waitForNewIp = false } = {}) {
+  let stopRequested = false;
+  let recoveryRequested = false;
+  try {
+    onProgress("pre_check", {});
+    const before = await describeInstance(machine.region, env, machine.instanceId);
+    if (before.instanceId !== machine.instanceId || before.state !== "running") {
+      const error = new Error("執行個體必須處於 running 狀態才能更換公網 IP。");
+      error.statusCode = 409;
+      error.precheck = true;
+      throw error;
+    }
+
+    onProgress("stopping", {});
+    await ec2Query(machine.region, env, "StopInstances", {
+      "InstanceId.1": machine.instanceId,
+    });
+    stopRequested = true;
+
+    const stopped = await waitForInstanceStopped(machine.region, env, machine.instanceId, onProgress);
+    if (!stopped) {
+      throw new Error("等待執行個體停止逾時");
+    }
+
+    onProgress("starting", {});
+    await ec2Query(machine.region, env, "StartInstances", {
+      "InstanceId.1": machine.instanceId,
+    });
+    recoveryRequested = true;
+  } catch (error) {
+    if (stopRequested && !recoveryRequested) {
+      try {
+        await ec2Query(machine.region, env, "StartInstances", {
+          "InstanceId.1": machine.instanceId,
+        });
+        recoveryRequested = true;
+      } catch {
+        // 原操作失敗時，恢復啟動也可能因狀態尚未就緒而失敗。
+      }
+    }
+    error.stopRequested = stopRequested;
+    error.recoveryRequested = recoveryRequested;
+    throw error;
+  }
+
+  onProgress("started", {});
+  if (!waitForNewIp) {
+    return { newIpAddress: null };
+  }
+  return { newIpAddress: await waitForNewPublicIp(machine, env, onProgress) };
+}
+
+/**
+ * 依 rotatePublicIp 拋出的錯誤旗標組合使用者可讀的失敗訊息，
+ * 讓多個呼叫端維持同一套文案。
+ */
+export function rotateIpFailureMessage(error) {
+  const stopRequested = Boolean(error?.stopRequested);
+  const recoveryRequested = Boolean(error?.recoveryRequested);
+  return stopRequested
+    ? recoveryRequested
+      ? "更換公網 IP 未完成；已送出恢復啟動請求，請確認執行個體狀態。"
+      : "更換公網 IP 未完成，且自動重新啟動未成功；請確認執行個體狀態後手動啟動。"
+    : "執行個體操作失敗。";
 }

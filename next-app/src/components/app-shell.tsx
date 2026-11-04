@@ -9,6 +9,7 @@ import {
   ScrollText,
   Server,
   Settings,
+  Share2,
   X,
   Zap,
 } from "lucide-react";
@@ -22,6 +23,7 @@ const navigation = [
   { href: "/lightsail", label: "Lightsail 部署", icon: Zap },
   { href: "/logs", label: "操作日誌", icon: ScrollText },
   { href: "/accounts", label: "帳號管理", icon: KeyRound },
+  { href: "/share", label: "分享連結", icon: Share2 },
   { href: "/settings", label: "設定", icon: Settings },
 ];
 

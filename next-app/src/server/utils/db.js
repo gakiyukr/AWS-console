@@ -53,10 +53,13 @@ export async function getMachineById(db, id) {
   return row ? { ...row, isWavelength: Boolean(row.isWavelength) } : null;
 }
 
-/** 移除機器；回傳是否確實刪除任一列。 */
+/** 移除機器；同時清理分享連結的綁定關聯，回傳是否確實刪除任一列。 */
 export async function deleteMachine(db, id) {
-  const result = await db.prepare("DELETE FROM machines WHERE id = ?1").bind(id).run();
-  return (result.meta.changes ?? 0) > 0;
+  const results = await db.batch([
+    db.prepare("DELETE FROM share_link_machines WHERE machine_id = ?1").bind(id),
+    db.prepare("DELETE FROM machines WHERE id = ?1").bind(id),
+  ]);
+  return (results[1].meta.changes ?? 0) > 0;
 }
 
 // ─── SSH 公鑰庫 ─────────────────────────────────────────────
@@ -275,6 +278,242 @@ export async function deleteAwsAccount(db, id) {
   return { deleted: (result.meta.changes ?? 0) > 0 };
 }
 
+
+// ─── 分享連結（對外一鍵換 IP） ─────────────────────────────
+
+const SHARE_LINK_COLUMNS = "id, name, token, cooldown_minutes AS cooldownMinutes, enabled, created_at AS createdAt, updated_at AS updatedAt, last_used_at AS lastUsedAt";
+
+function normalizeShareLink(row) {
+  return row ? { ...row, enabled: Boolean(row.enabled) } : null;
+}
+
+/** 依主鍵取得單一連結（不含綁定機器）；不存在回 null。 */
+export async function getShareLinkById(db, id) {
+  return normalizeShareLink(await db
+    .prepare(`SELECT ${SHARE_LINK_COLUMNS} FROM share_links WHERE id = ?1`)
+    .bind(id)
+    .first());
+}
+
+/**
+ * 依 token 取得連結與其綁定機器（含各機器的最後觸發時間）。
+ * token 是 URL 即憑證，以明文比對 UNIQUE 索引；不存在回 null。
+ * @returns {Promise<{id:number, name:string, token:string, cooldownMinutes:number,
+ *   enabled:boolean, createdAt:string, updatedAt:string, lastUsedAt:string|null,
+ *   machines:Array<{id:number, name:string, region:string, lastTriggeredAt:number|null}>}|null>}
+ */
+export async function getShareLinkByToken(db, token) {
+  if (!token) {
+    return null;
+  }
+  const row = await db
+    .prepare(`SELECT ${SHARE_LINK_COLUMNS} FROM share_links WHERE token = ?1`)
+    .bind(token)
+    .first();
+  if (!row) {
+    return null;
+  }
+  const link = normalizeShareLink(row);
+  const { results } = await db
+    .prepare(`SELECT sm.machine_id AS id, m.name, m.region, sm.last_triggered_at AS lastTriggeredAt
+      FROM share_link_machines sm
+      JOIN machines m ON m.id = sm.machine_id
+      WHERE sm.share_link_id = ?1
+      ORDER BY sm.machine_id`)
+    .bind(link.id)
+    .all();
+  return { ...link, machines: results };
+}
+
+/**
+ * 取得全部分享連結，每條附帶綁定機器的名稱與地區（管理頁顯示用）。
+ */
+export async function listShareLinks(db) {
+  const { results } = await db
+    .prepare(`SELECT ${SHARE_LINK_COLUMNS} FROM share_links ORDER BY id`)
+    .all();
+  const { results: bindings } = await db
+    .prepare(`SELECT share_link_id AS shareLinkId, sm.machine_id AS id, m.name, m.region
+      FROM share_link_machines sm
+      JOIN machines m ON m.id = sm.machine_id
+      ORDER BY sm.machine_id`)
+    .all();
+  return results.map((link) => ({
+    ...normalizeShareLink(link),
+    machines: bindings
+      .filter(binding => binding.shareLinkId === link.id)
+      .map(({ id, name, region }) => ({ id, name, region })),
+  }));
+}
+
+/** 寫入連結與機器的綁定關聯（呼叫端已確保機器存在）。 */
+async function bindShareLinkMachines(db, shareLinkId, machineIds) {
+  if (machineIds.length === 0) {
+    return;
+  }
+  await db.batch(machineIds.map(machineId =>
+    db.prepare("INSERT INTO share_link_machines (share_link_id, machine_id) VALUES (?1, ?2)")
+      .bind(shareLinkId, machineId)));
+}
+
+/**
+ * 建立連結；token 撞 UNIQUE 時回 null（呼叫端回 409/500 語意）。
+ * @returns {Promise<{id:number}|null>}
+ */
+export async function createShareLink(db, { name, token, cooldownMinutes, machineIds }) {
+  try {
+    const result = await db
+      .prepare("INSERT INTO share_links (name, token, cooldown_minutes) VALUES (?1, ?2, ?3)")
+      .bind(name, token, cooldownMinutes)
+      .run();
+    const id = result.meta.last_row_id;
+    await bindShareLinkMachines(db, id, machineIds);
+    return { id };
+  } catch (error) {
+    if (String(error?.message || error).includes("UNIQUE")) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * 部分更新連結；僅更新有提供的欄位。回傳更新後的連結，不存在回 null。
+ * @param {{ name?: string, cooldownMinutes?: number, enabled?: boolean }} updates
+ */
+export async function updateShareLink(db, id, updates) {
+  const sets = [];
+  const bindings = [];
+  if (updates.name !== undefined) {
+    sets.push("name = ?");
+    bindings.push(updates.name);
+  }
+  if (updates.cooldownMinutes !== undefined) {
+    sets.push("cooldown_minutes = ?");
+    bindings.push(updates.cooldownMinutes);
+  }
+  if (updates.enabled !== undefined) {
+    sets.push("enabled = ?");
+    bindings.push(updates.enabled ? 1 : 0);
+  }
+  if (sets.length === 0) {
+    return getShareLinkById(db, id);
+  }
+  sets.push("updated_at = datetime('now')");
+  const result = await db
+    .prepare(`UPDATE share_links SET ${sets.join(", ")} WHERE id = ?`)
+    .bind(...bindings, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0 ? getShareLinkById(db, id) : null;
+}
+
+/** 刪除連結與其綁定關聯；回傳是否確實刪除任一列。 */
+export async function deleteShareLink(db, id) {
+  const results = await db.batch([
+    db.prepare("DELETE FROM share_link_machines WHERE share_link_id = ?1").bind(id),
+    db.prepare("DELETE FROM share_links WHERE id = ?1").bind(id),
+  ]);
+  return (results[1].meta.changes ?? 0) > 0;
+}
+
+/**
+ * 以條件式 UPDATE 原子搶取「連結×機器」的換 IP 觸發權：
+ * cooldownMs 為 0（不限）或 last_triggered_at 已超過冷卻期時才會更新成功。
+ * 回傳 false 表示綁定不存在、冷卻中，或已被併發請求搶走。
+ */
+export async function claimShareRotation(db, shareLinkId, machineId, now, cooldownMs) {
+  const result = await db
+    .prepare(`UPDATE share_link_machines SET last_triggered_at = ?3
+      WHERE share_link_id = ?1 AND machine_id = ?2
+        AND (?4 <= 0 OR last_triggered_at IS NULL OR last_triggered_at <= ?3 - ?4)`)
+    .bind(shareLinkId, machineId, now, cooldownMs)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/** 讀取單一綁定關聯（搶鎖失敗時計算剩餘冷卻用）；不存在回 null。 */
+export async function getShareLinkMachineBinding(db, shareLinkId, machineId) {
+  return await db
+    .prepare("SELECT share_link_id AS shareLinkId, machine_id AS machineId, last_triggered_at AS lastTriggeredAt FROM share_link_machines WHERE share_link_id = ?1 AND machine_id = ?2")
+    .bind(shareLinkId, machineId)
+    .first() ?? null;
+}
+
+/** 觸發換 IP 後更新連結的最後使用時間。 */
+export async function touchShareLinkUsed(db, id) {
+  await db.prepare("UPDATE share_links SET last_used_at = datetime('now') WHERE id = ?1").bind(id).run();
+}
+
+// ─── 全域設定（KV） ────────────────────────────────────────
+
+/** 讀取單一設定值；不存在回 null。 */
+export async function getAppSetting(db, key) {
+  const row = await db.prepare("SELECT value FROM app_settings WHERE key = ?1").bind(key).first();
+  return row?.value ?? null;
+}
+
+/** 寫入（upsert）單一設定值。 */
+export async function setAppSetting(db, key, value) {
+  await db
+    .prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = datetime('now')`)
+    .bind(key, value)
+    .run();
+}
+
+// ─── Cap 人機驗證狀態 ──────────────────────────────────────
+
+/**
+ * 消費 PoW challenge 的重放防護：簽章插入即成功，UNIQUE 衝突代表重放。
+ * 對應 capjs-core 的 consumeNonce(sigHex, ttlMs) 回呼。
+ */
+export async function consumeCapNonce(db, sig, ttlMs) {
+  try {
+    await db.prepare("INSERT INTO cap_nonces (sig, expires_at) VALUES (?1, ?2)")
+      .bind(sig, Date.now() + Math.max(1, Math.trunc(ttlMs)))
+      .run();
+    return true;
+  } catch (error) {
+    if (String(error?.message || error).includes("UNIQUE")) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/** 保存通過人機驗證的一次性憑證（tokenKey → 到期時間，epoch ms）。 */
+export async function storeCapToken(db, tokenKey, expiresAt) {
+  await db.prepare("INSERT INTO cap_tokens (token_key, expires_at) VALUES (?1, ?2)")
+    .bind(tokenKey, expiresAt)
+    .run();
+}
+
+/** 讀取人機驗證憑證的到期時間（epoch ms）；不存在回 null。查驗用，不消費。 */
+export async function getCapTokenExpiry(db, tokenKey) {
+  const row = await db.prepare("SELECT expires_at AS expiresAt FROM cap_tokens WHERE token_key = ?1")
+    .bind(tokenKey)
+    .first();
+  return row ? Number(row.expiresAt) : null;
+}
+
+/**
+ * 單次消費人機驗證憑證：條件式 DELETE 同時判定存在與未過期，
+ * 回傳 false 表示不存在、已過期或已被併發請求使用。
+ */
+export async function consumeCapToken(db, tokenKey, now = Date.now()) {
+  const result = await db.prepare("DELETE FROM cap_tokens WHERE token_key = ?1 AND expires_at > ?2")
+    .bind(tokenKey, now)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/** 清理過期的 cap 重放記錄與憑證；由路由端 best-effort 呼叫。 */
+export async function deleteExpiredCapRows(db, now = Date.now()) {
+  await db.batch([
+    db.prepare("DELETE FROM cap_nonces WHERE expires_at <= ?1").bind(now),
+    db.prepare("DELETE FROM cap_tokens WHERE expires_at <= ?1").bind(now),
+  ]);
+}
 
 // ─── SSO 設定（OOBE 初始設定） ──────────────────────────────
 

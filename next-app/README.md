@@ -270,6 +270,9 @@ Lightsail 的一鍵開通另需 `lightsail:SetIpAddressType` 與 `lightsail:GetI
   `SetIpAddressType dualstack`。Wavelength 機器直接回 400。所有步驟先 Describe
   再寫入，重複執行安全。
 - `/api/accounts`：AWS 帳號與加密憑證管理；`/:id/test` 可驗證憑證，`/:id/regions/enable` 可開通區域。
+  建立帳號時自動快取該帳號的可用區域；`/:id/regions/cache` 提供快取讀取
+  （`?platform=`＋`backfill=0` 唯讀模式）與手動重新整理（POST）。開機器的
+  區域下拉一律讀快取。
 - `/api/ssh-keys`：部署用 SSH 公鑰庫的列表、新增（上限 50 把）與刪除。
 - `/api/ec2/*`：一般 EC2 的 Region、VPC、執行個體、作業系統選項與部署流程。
 - `/api/lightsail/*`：Lightsail 的 Region、Blueprint、Bundle、執行個體清單
@@ -324,6 +327,10 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
 - `0010_machine_platform.sql`：machines 加 `platform` 欄位（ec2 / lightsail），
   回填規則為 `instance_id` 以 `i-` 開頭者為 ec2，其餘為 lightsail；附
   `(platform, id)` 索引。EC2 與 Lightsail 的列表、狀態查詢與電源操作依此分流。
+- `0011_account_regions.sql`：帳號區域快取表。新增帳號時抓取該帳號可用區域
+  （EC2=opt-in 已啟用、Lightsail=完整清單）存入快取，開機器的區域下拉只讀
+  快取（快取為空時自動回填 live）。更新點：建立帳號、開通區域成功、帳號頁
+  手動重新整理。
 
 ## 已知建置注意事項
 

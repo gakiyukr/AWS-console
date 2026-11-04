@@ -120,10 +120,12 @@ export default function LightsailPage() {
     setForm(previous => ({ ...previous, region: "", blueprintId: "", bundleId: "" }));
     if (!accountId) return;
     try {
-      const response = await fetch(`/api/lightsail/regions?account_id=${accountId}`);
+      // 讀帳號的區域快取（建立帳號時建立）；快取為空會自動回填
+      const response = await fetch(`/api/accounts/${accountId}/regions/cache?platform=lightsail`);
       if (!response.ok) throw new Error("載入 Lightsail Region 失敗");
-      const payload = await readJson<{ regions?: string[] }>(response);
+      const payload = await readJson<{ regions?: string[]; cached?: boolean }>(response);
       setRegions(payload.regions || []);
+      if (payload.cached === false) toast.success("首次讀取：已從 AWS 抓取並快取此帳號的區域清單");
     } catch {
       toastDanger("載入 Lightsail Region 失敗");
     }
@@ -371,7 +373,7 @@ export default function LightsailPage() {
               <option value="">請選擇 Blueprint</option>
               {blueprints.map(bp => (
                 <option key={bp.blueprintId} value={bp.blueprintId}>
-                  {bp.name} ({bp.platform})
+                  {bp.name}
                 </option>
               ))}
             </select>

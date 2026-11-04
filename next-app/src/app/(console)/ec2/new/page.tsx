@@ -118,10 +118,12 @@ export default function Ec2Page() {
     setForm(previous => ({ ...previous, region: "", vpcId: "" }));
     if (!accountId) return;
     try {
-      const response = await fetch(`/api/ec2/regions?account_id=${accountId}`);
+      // 讀帳號的區域快取（建立帳號時建立）；快取為空會自動回填
+      const response = await fetch(`/api/accounts/${accountId}/regions/cache?platform=ec2`);
       if (!response.ok) throw new Error("載入 EC2 Region 失敗");
-      const payload = await readJson<{ regions?: string[] }>(response);
+      const payload = await readJson<{ regions?: string[]; cached?: boolean }>(response);
       setRegions(payload.regions || []);
+      if (payload.cached === false) toast.success("首次讀取：已從 AWS 抓取並快取此帳號的區域清單");
     } catch {
       toastDanger("載入 EC2 Region 失敗");
     }

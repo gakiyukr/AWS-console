@@ -1,8 +1,12 @@
 // /api/accounts：GET 回傳 AWS 帳號清單（密文欄位不出伺服器）；
-// POST 建立新帳號（Access Key 加密寫入 D1）。
+// POST 建立新帳號（Access Key 加密寫入 D1）。建立成功後 best-effort
+// 抓取兩平台的可用區域並寫入快取，讓開機器的區域下拉只顯示快取內容。
 import { encryptAwsCredentials } from "@/server/utils/credential-crypto.js";
-import { createAwsAccount, listAwsAccounts } from "@/server/utils/db.js";
+import { createAwsAccount, listAwsAccounts, replaceCachedRegions } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
+import { listEc2Regions } from "@/server/utils/wavelength.js";
+import { listLightsailRegions } from "@/server/utils/lightsail-deploy.js";
+import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 
@@ -52,10 +56,22 @@ export async function POST(request: Request): Promise<Response> {
     if (!account) {
       return errorResponse(409, "AWS 帳號名稱已存在");
     }
+
+    // 區域快取：建立成功後立即抓取兩平台清單。抓取失敗（憑證無效、網路）
+    // 不影響帳號建立——快取為空時，區域下拉會在首次讀取時自動回填。
+    let regionCacheWarning = null;
+    try {
+      const { awsEnv } = await resolveAwsAccount(env, account.id);
+      await replaceCachedRegions(env.DB, account.id, "ec2", await listEc2Regions(awsEnv));
+      await replaceCachedRegions(env.DB, account.id, "lightsail", await listLightsailRegions(awsEnv));
+    } catch (error) {
+      regionCacheWarning = `帳號已建立，但區域快取尚未建立（${error instanceof Error ? error.message : "未知錯誤"}）；開機器時會自動重試。`;
+    }
+
     const safe = { ...account };
     delete safe.credentialCiphertext;
     delete safe.credentialIv;
-    return jsonResponse({ account: safe }, { status: 201 });
+    return jsonResponse({ account: safe, regionCacheWarning }, { status: 201 });
   } catch (error) {
     return errorResponse(400, error instanceof Error ? error.message : "AWS 帳號建立失敗");
   }

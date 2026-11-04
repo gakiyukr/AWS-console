@@ -2,7 +2,7 @@
 // EC2 EnableRegion 屬帳號層級操作（一律送至 us-east-1），成功與失敗皆寫入
 // 操作日誌（action=enable_region）供 /logs 頁稽核；日誌寫入失敗不影響回應。
 import { resolveAwsAccount, toAwsAccountHttpError } from "@/server/utils/aws-account.js";
-import { appendOperationLog } from "@/server/utils/db.js";
+import { addCachedRegion, appendOperationLog } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody, toHttpError } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
 import { enableAwsRegion } from "@/server/utils/wavelength.js";
@@ -73,6 +73,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   await appendEnableRegionLog(env.DB, awsAccountId, region, "success", null);
+  // 開通成功即併入區域快取：AWS 實際生效需數分鐘，但快取先行符合
+  // 「下拉只顯示我開過的區」的意圖；已存在時靜默略過。
+  try {
+    await addCachedRegion(env.DB, awsAccountId, "ec2", region);
+  } catch {
+    // 快取併入失敗不影響開通結果；下次重新整理快取會補上
+  }
   return jsonResponse({
     ok: true,
     message: `已送出開通 ${region} 的請求，開通程序需數分鐘，稍後可重新載入確認狀態。`,

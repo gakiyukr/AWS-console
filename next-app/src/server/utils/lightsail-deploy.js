@@ -50,10 +50,11 @@ export async function listLightsailBundles(awsEnv, region) {
 export async function listLightsailBlueprints(awsEnv, region) {
   const response = await lightsailQuery(region, awsEnv, "GetBlueprints", {});
   return (response.blueprints || [])
-    .filter((bp) => bp.type === "os") // 僅列出作業系統，排除應用程式堆疊
+    .filter((bp) => bp.type === "os" && bp.isActive !== false) // 僅現行的作業系統版本；GetBlueprints 會一併回傳停售的舊版（isActive: false）
     .map((bp) => ({
       blueprintId: bp.blueprintId,
-      name: bp.name,
+      // name 是泛名（如 "Ubuntu"），版本資訊在 versionTitle；缺漏時以 name+version 兜底
+      name: bp.versionTitle || [bp.name, bp.version].filter(Boolean).join(" "),
       description: bp.description,
       platform: bp.platform,
       group: bp.group,

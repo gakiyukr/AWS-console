@@ -273,13 +273,55 @@ export async function deleteAwsAccount(db, id) {
   const account = await getAwsAccountById(db, id);
   if (!account)
     return { deleted: false, reason: "not_found" };
-  const result = await db.prepare("DELETE FROM aws_accounts WHERE id = ?1").bind(id).run();
+  const result = await db.batch([
+    db.prepare("DELETE FROM account_regions WHERE aws_account_id = ?1").bind(id),
+    db.prepare("DELETE FROM aws_accounts WHERE id = ?1").bind(id),
+  ]);
   if (account.isDefault) {
     const next = (await listAwsAccounts(db)).find(item => item.enabled);
     if (next)
       await db.prepare("UPDATE aws_accounts SET is_default = 1, updated_at = datetime('now') WHERE id = ?1").bind(next.id).run();
   }
-  return { deleted: (result.meta.changes ?? 0) > 0 };
+  return { deleted: (result[1].meta.changes ?? 0) > 0 };
+}
+
+// ─── 帳號區域快取 ───────────────────────────────────────────
+
+/**
+ * 讀取帳號的快取區域（依平台）；無快取回空陣列，由呼叫端決定是否回填。
+ * @param {D1Database} db
+ * @param {number} accountId
+ * @param {"ec2" | "lightsail"} platform
+ * @returns {Promise<string[]>}
+ */
+export async function listCachedRegions(db, accountId, platform) {
+  const { results } = await db
+    .prepare("SELECT region FROM account_regions WHERE aws_account_id = ?1 AND platform = ?2 ORDER BY region")
+    .bind(accountId, platform)
+    .all();
+  return results.map(row => row.region);
+}
+
+/** 整批替換帳號的平台區域快取（刪除全部後重寫，冪等）。 */
+export async function replaceCachedRegions(db, accountId, platform, regions) {
+  const cleaned = [...new Set(regions.filter(Boolean))].sort();
+  const statements = [
+    db.prepare("DELETE FROM account_regions WHERE aws_account_id = ?1 AND platform = ?2").bind(accountId, platform),
+    ...cleaned.map(region =>
+      db.prepare("INSERT INTO account_regions (aws_account_id, platform, region) VALUES (?1, ?2, ?3)")
+        .bind(accountId, platform, region)),
+  ];
+  // 空清單時只有 DELETE，仍需批次以保持原子性
+  await db.batch(statements);
+  return cleaned.length;
+}
+
+/** 併入單一區域（開通區域成功後）；已存在時靜默略過。 */
+export async function addCachedRegion(db, accountId, platform, region) {
+  await db
+    .prepare("INSERT OR IGNORE INTO account_regions (aws_account_id, platform, region) VALUES (?1, ?2, ?3)")
+    .bind(accountId, platform, region)
+    .run();
 }
 
 

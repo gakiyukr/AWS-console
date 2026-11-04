@@ -3,7 +3,7 @@
 // 帳號管理：維護 D1 中的 AWS 加密憑證（新增／編輯／測試／刪除），
 // 並提供逐帳號的 Region opt-in 狀態檢視與開通請求。
 import { useEffect, useState } from "react";
-import { CheckCircle2, Globe, KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, Globe, KeyRound, Loader2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
@@ -46,6 +46,19 @@ function isRegionActive(status: string) {
 
 
 
+
+/** 唯讀抓取單一帳號的平台區域快取；失敗回空陣列（不打 AWS 回填）。 */
+async function fetchRegionCache(accountId: number, platform: "ec2" | "lightsail"): Promise<string[]> {
+  try {
+    const response = await fetch(`/api/accounts/${accountId}/regions/cache?platform=${platform}&backfill=0`);
+    if (!response.ok) return [];
+    const payload = await readJson<{ regions?: string[] }>(response);
+    return payload.regions || [];
+  } catch {
+    return [];
+  }
+}
+
 const EMPTY_FORM = {
   name: "",
   accessKeyId: "",
@@ -60,6 +73,9 @@ export default function AccountsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<number | null>(null);
+  // 區域快取：帳號 ID → 各平台快取的區域清單（唯讀顯示，回填只在開機器流程觸發）
+  const [regionCaches, setRegionCaches] = useState<Record<number, { ec2: string[]; lightsail: string[] }>>({});
+  const [refreshingCacheId, setRefreshingCacheId] = useState<number | null>(null);
 
   const [accountOpen, setAccountOpen] = useState(false);
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
@@ -82,10 +98,39 @@ export default function AccountsPage() {
       if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<{ accounts: AwsAccount[] }>(response);
       setAccounts(payload.accounts);
+      await loadRegionCaches(payload.accounts);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入帳號資料失敗");
     } finally {
       setLoading(false);
+    }
+  }
+
+  /** 唯讀載入各帳號的區域快取（backfill=0，不打 AWS）；載入失敗靜默留空。 */
+  async function loadRegionCaches(accountList: AwsAccount[]) {
+    const next: Record<number, { ec2: string[]; lightsail: string[] }> = {};
+    await Promise.all(accountList.map(async account => {
+      const platforms = await Promise.all((["ec2", "lightsail"] as const).map(
+        platform => fetchRegionCache(account.id, platform),
+      ));
+      next[account.id] = { ec2: platforms[0], lightsail: platforms[1] };
+    }));
+    setRegionCaches(next);
+  }
+
+  /** 手動重新整理單一帳號的區域快取（兩平台重抓 live）。 */
+  async function refreshRegionCache(account: AwsAccount) {
+    setRefreshingCacheId(account.id);
+    try {
+      const response = await fetch(`/api/accounts/${account.id}/regions/cache`, { method: "POST" });
+      if (!response.ok) throw new Error(await readError(response));
+      const payload = await readJson<{ message?: string }>(response);
+      toast.success(payload.message || "區域快取已更新");
+      await loadRegionCaches([account]);
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "更新區域快取失敗");
+    } finally {
+      setRefreshingCacheId(null);
     }
   }
 
@@ -99,6 +144,8 @@ export default function AccountsPage() {
     return () => {
       cancelled = true;
     };
+    // 掛載時載入一次；loadData 為純讀取（帳號＋區域快取顯示），不需隨依賴重跑
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function openNewAccount() {
@@ -223,6 +270,8 @@ export default function AccountsPage() {
       const payload = await readJson<{ message?: string }>(response);
       toast.success(payload?.message || `已送出開通 ${region} 的請求`);
       await loadAccountRegions(regionAccount.id);
+      // 開通成功後端已併入快取，刷新卡片上的快取顯示
+      await loadRegionCaches(accounts);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : `開通 ${region} 失敗`);
     } finally {
@@ -276,7 +325,31 @@ export default function AccountsPage() {
                       ? new Date(account.lastVerifiedAt).toLocaleString("zh-TW")
                       : "尚未驗證"}
                   </p>
+                  {(() => {
+                    const cache = regionCaches[account.id];
+                    const ec2Count = cache?.ec2.length ?? 0;
+                    const lightsailCount = cache?.lightsail.length ?? 0;
+                    const tooltip = cache
+                      ? `EC2：${cache.ec2.join("、") || "（無）"}\nLightsail：${cache.lightsail.join("、") || "（無）"}`
+                      : "";
+                    return (
+                      <p className="text-xs text-muted" title={tooltip}>
+                        區域快取：EC2 {ec2Count} 區 · Lightsail {lightsailCount} 區
+                        {cache && ec2Count === 0 && lightsailCount === 0 ? "（尚未建立，開機器時自動抓取）" : ""}
+                      </p>
+                    );
+                  })()}
                   <div className="flex justify-end gap-1 border-t pt-3">
+                    <Button
+                      variant="ghost"
+                      aria-label="重新整理區域快取"
+                      isDisabled={refreshingCacheId === account.id}
+                      onPress={() => refreshRegionCache(account)}
+                    >
+                      {refreshingCacheId === account.id
+                        ? <Loader2 aria-hidden size={16} className="animate-spin" />
+                        : <RefreshCw aria-hidden size={16} />}
+                    </Button>
                     <Button variant="ghost" aria-label="開通區域" onPress={() => openRegionDialog(account)}>
                       <Globe aria-hidden size={16} />
                     </Button>

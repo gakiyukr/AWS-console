@@ -80,7 +80,8 @@ export default function LightsailOverviewPage() {
   async function loadRegions(accountId: number) {
     setLoadingRegions(true);
     try {
-      const response = await fetch(`/api/lightsail/regions?account_id=${accountId}`);
+      // 讀帳號的區域快取；快取為空會自動回填
+      const response = await fetch(`/api/accounts/${accountId}/regions/cache?platform=lightsail`);
       if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<{ regions?: string[] }>(response);
       setRegions(payload.regions || []);

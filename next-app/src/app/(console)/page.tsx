@@ -442,34 +442,45 @@ export default function MachinesPage() {
             <NoSsr>
             <Table.Root>
               <Table.ScrollContainer>
-                <Table.Content aria-label="機器清單">
+                {/* table-fixed + 每欄固定寬度：避免 auto layout 在窄螢幕把
+                    名稱、地區、狀態壓成折行，也避免寬螢幕把留白拉散。
+                    名稱欄最寬以容納長執行個體名稱（超出以 truncate 省略），
+                    其餘欄位依內容需求給定；總寬小於容器時橫向捲動。 */}
+                <Table.Content aria-label="機器清單" className="min-w-[1560px] table-fixed">
                   <Table.Header>
-                    <Table.Column isRowHeader>名稱</Table.Column>
-                    <Table.Column>地區</Table.Column>
-                    <Table.Column>AWS 帳號</Table.Column>
-                    <Table.Column>狀態</Table.Column>
-                    <Table.Column>公網 IP</Table.Column>
-                    <Table.Column>IPv6</Table.Column>
-                    <Table.Column>DNS</Table.Column>
-                    <Table.Column>操作</Table.Column>
+                    <Table.Column isRowHeader className="w-[300px]">名稱</Table.Column>
+                    <Table.Column className="w-[130px]">地區</Table.Column>
+                    <Table.Column className="w-[160px]">AWS 帳號</Table.Column>
+                    <Table.Column className="w-[100px]">狀態</Table.Column>
+                    <Table.Column className="w-[130px]">公網 IP</Table.Column>
+                    <Table.Column className="w-[200px]">IPv6</Table.Column>
+                    <Table.Column className="w-[280px]">DNS</Table.Column>
+                    <Table.Column className="w-[280px]">操作</Table.Column>
                   </Table.Header>
                   <Table.Body>
                     {machines.map(machine => (
                       <Table.Row id={String(machine.id)} key={machine.id}>
                         <Table.Cell>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{machine.name}</span>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="min-w-0 flex-1 truncate font-medium" title={machine.name}>
+                              {machine.name}
+                            </span>
                             {machine.isWavelength ? (
                               <Chip variant="secondary" size="sm">WL</Chip>
                             ) : null}
                           </div>
-                          <div className="font-mono text-xs text-muted">{machine.instanceId}</div>
+                          <div className="truncate font-mono text-xs text-muted">{machine.instanceId}</div>
                         </Table.Cell>
                         <Table.Cell>
-                          <span className="font-mono text-xs">{machine.region}</span>
+                          <span className="whitespace-nowrap font-mono text-xs">{machine.region}</span>
                         </Table.Cell>
                         <Table.Cell>
-                          <span className="text-xs">{machine.awsAccountName || "未關聯"}</span>
+                          <span
+                            className="block max-w-full truncate text-xs"
+                            title={machine.awsAccountName || "未關聯"}
+                          >
+                            {machine.awsAccountName || "未關聯"}
+                          </span>
                         </Table.Cell>
                         <Table.Cell>
                           <Chip variant={stateBadgeVariant(machine.state)} size="sm">
@@ -481,7 +492,7 @@ export default function MachinesPage() {
                             <button
                               type="button"
                               title="點擊複製"
-                              className="font-mono text-xs underline-offset-4 hover:underline"
+                              className="whitespace-nowrap font-mono text-xs underline-offset-4 hover:underline"
                               onClick={() => copyText(machine.publicIpAddress!)}
                             >
                               {machine.publicIpAddress}
@@ -490,36 +501,40 @@ export default function MachinesPage() {
                             <span className="text-muted">—</span>
                           )}
                         </Table.Cell>
-                        <Table.Cell>
+                        <Table.Cell className="overflow-hidden">
                           {machine.ipv6Address ? (
-                            <button
-                              type="button"
-                              title="點擊複製"
-                              className="block max-w-40 truncate font-mono text-xs underline-offset-4 hover:underline"
-                              onClick={() => copyText(machine.ipv6Address!)}
-                            >
-                              {machine.ipv6Address}
-                            </button>
+                            <div className="min-w-0">
+                              <button
+                                type="button"
+                                title={`${machine.ipv6Address}（點擊複製）`}
+                                className="line-clamp-1 w-full text-left font-mono text-xs underline-offset-4 hover:underline"
+                                onClick={() => copyText(machine.ipv6Address!)}
+                              >
+                                {machine.ipv6Address}
+                              </button>
+                            </div>
                           ) : (
                             <span className="text-muted">—</span>
                           )}
                         </Table.Cell>
-                        <Table.Cell>
+                        <Table.Cell className="overflow-hidden">
                           {machine.publicDnsName ? (
-                            <button
-                              type="button"
-                              title="點擊複製"
-                              className="block max-w-56 truncate font-mono text-xs underline-offset-4 hover:underline"
-                              onClick={() => copyText(machine.publicDnsName!)}
-                            >
-                              {machine.publicDnsName}
-                            </button>
+                            <div className="min-w-0">
+                              <button
+                                type="button"
+                                title={`${machine.publicDnsName}（點擊複製）`}
+                                className="line-clamp-1 w-full text-left font-mono text-xs underline-offset-4 hover:underline"
+                                onClick={() => copyText(machine.publicDnsName!)}
+                              >
+                                {machine.publicDnsName}
+                              </button>
+                            </div>
                           ) : (
                             <span className="text-muted">—</span>
                           )}
                         </Table.Cell>
                         <Table.Cell>
-                          <div className="flex items-center justify-end gap-1">
+                          <div className="flex items-center justify-end gap-1 whitespace-nowrap">
                             <Button
                               variant="ghost"
                               aria-label="重新整理狀態"

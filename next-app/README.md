@@ -11,6 +11,11 @@
   可一頁綁一機或多機，冷卻時間由連結自訂（0 表示不限）。
 - 分享頁可自後台開啟 [Cap](https://trycap.dev/) 人機驗證（工作量證明）：
   訪客點擊「一鍵換 IP」前須先通過驗證，兌換憑證為一次性。
+- EC2 與 Lightsail 完全分開：各自有機器總覽（`/ec2`、`/lightsail`）與
+  新增機器表單（`/ec2/new`、`/lightsail/new`），首頁 `/` 轉址到 `/ec2`。
+  機器以 `machines.platform`（ec2 / lightsail）區分，狀態查詢與電源操作
+  依平台分流（Lightsail 走 GetInstances／StartInstance／StopInstance／
+  RebootInstance／DeleteInstance）；Lightsail 不支援「更換公網 IP」。
 - 建立及初始化 AWS Wavelength Zone 所需的子網、Carrier Gateway、路由表與安全群組。
 - 以獨立工作流部署一般區域 EC2、Wavelength 執行個體、Lightsail 執行個體與 SSH forwarder。
 - 部署一般 EC2 時可選用 IPv6（完整開通 VPC/子網 CIDR、IGW 路由與安全群組規則）；
@@ -25,9 +30,10 @@
 ```
 next-app/
 ├── src/app/(console)/   # 受保護頁面（layout 內做頁面守衛，一律動態渲染）
-│   ├── page.tsx         # 機器總覽與電源操作
-│   ├── ec2/             # 一般 EC2 部署
-│   ├── lightsail/        # Lightsail 部署
+│   ├── page.tsx         # 入口：轉址到 /ec2
+│   ├── ec2/             # EC2 機器總覽（電源／IPv6／換 IP）；new/ 為新增機器表單
+│   ├── lightsail/       # Lightsail 機器總覽（電源／IPv6）；new/ 為新增機器表單
+│   ├── wavelength/      # Wavelength Zone 初始化與部署（未列入導覽，URL 直達）
 │   ├── accounts/        # AWS 帳號管理
 │   ├── logs/            # 稽核日誌
 │   ├── share/           # 分享連結管理（對外一鍵換 IP）
@@ -36,8 +42,10 @@ next-app/
 ├── src/app/share/[token]/  # 公開分享頁（免登入，token 即憑證）
 ├── src/app/api/         # API 路由（見下方「API 範圍」）
 ├── src/server/          # 守衛（page-guard、api-guard）與後端工具層
-├── src/lib/             # 前後端共用：regions、ssh-keys、deployment-stream
-├── src/components/      # AppShell、Chip、NoSsr 等共用元件
+├── src/lib/             # 前後端共用：regions、ssh-keys、deployment-stream、
+│                        #   use-machines（總覽頁共用邏輯）、machine-display
+├── src/components/      # AppShell、MachineTable（兩平台共用表格）、
+│                        #   ConfirmDialog、Chip、NoSsr 等共用元件
 ├── server/db/migrations # D1 migrations（wrangler.jsonc 引用）
 ├── wrangler.jsonc       # Worker 設定（正式名稱 aws-console、D1 binding）
 └── open-next.config.ts  # OpenNext Cloudflare 設定
@@ -245,11 +253,17 @@ Lightsail 的一鍵開通另需 `lightsail:SetIpAddressType` 與 `lightsail:GetI
 - `/api/logout`：清除 session。
 - `/api/setup/*`：OOBE 初始設定的測試連線與驗證啟動。
 - `/api/machines`：EC2 管理清單與即時狀態；`DELETE /:id` 僅移除清單記錄。
+  `GET` 支援 `?platform=ec2|lightsail` 篩選（省略回傳全部，分享管理頁用）；
+  `POST` 以 body 的 `platform` 決定平台（Lightsail 的 identifier 是執行個體
+  名稱，不受 EC2 的 `i-…` 正則限制）。狀態查詢依平台分流：EC2 用
+  `DescribeInstances`、Lightsail 用 `GetInstances`，兩者互不拖累。
 - `/api/machines/:id/action`：對清單內機器送出 `start`、`stop`、`reboot` 或
-  `terminate`。`reboot` 不會更換公網 IP；`terminate` 為不可逆操作，成功後
+  `terminate`。依 `machine.platform` 分流：EC2 走 Start/Stop/Reboot/
+  TerminateInstances，Lightsail 走 Start/Stop/Reboot/DeleteInstance。
+  `reboot` 不會更換公網 IP；`terminate` 為不可逆操作，成功後
   執行個體被永久刪除並同步移除清單記錄。
 - `/api/machines/:id/reboot-ip`：連續執行 stop → 等待 stopped → start，
-  藉此更換公網 IP。
+  藉此更換公網 IP。Lightsail 機器回 400（不支援此機制）。
 - `/api/machines/:id/ipv6`：為既有機器開通 IPv6（完整開通）。EC2 依序確保
   VPC `/56`、子網 `/64`、Internet Gateway 的 `::/0` 路由與安全群組 `::/0` 規則，
   再指派位址並重開機一次（約 1 分鐘，不更換 IPv4 公網 IP）；Lightsail 走
@@ -258,7 +272,8 @@ Lightsail 的一鍵開通另需 `lightsail:SetIpAddressType` 與 `lightsail:GetI
 - `/api/accounts`：AWS 帳號與加密憑證管理；`/:id/test` 可驗證憑證，`/:id/regions/enable` 可開通區域。
 - `/api/ssh-keys`：部署用 SSH 公鑰庫的列表、新增（上限 50 把）與刪除。
 - `/api/ec2/*`：一般 EC2 的 Region、VPC、執行個體、作業系統選項與部署流程。
-- `/api/lightsail/*`：Lightsail 的 Region、Blueprint、Bundle 與部署流程。
+- `/api/lightsail/*`：Lightsail 的 Region、Blueprint、Bundle、執行個體清單
+  （`instances`，供加入既有機器）與部署流程。
 - `/api/share-links`：分享連結（對外一鍵換 IP 公開頁）管理；建立時由伺服端
   產生 token（明文儲存，URL 即憑證），`/:id` 支援 PATCH（名稱／冷卻／啟停用）
   與 DELETE。
@@ -306,6 +321,9 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
   （含各綁定的最後觸發時間，作為訪客側冷卻依據）。
 - `0009_app_settings_and_cap.sql`：後台 KV 設定表（人機驗證開關），以及 Cap
   人機驗證的重放記錄（`cap_nonces`）與一次性兌換憑證（`cap_tokens`）兩張表。
+- `0010_machine_platform.sql`：machines 加 `platform` 欄位（ec2 / lightsail），
+  回填規則為 `instance_id` 以 `i-` 開頭者為 ec2，其餘為 lightsail；附
+  `(platform, id)` 索引。EC2 與 Lightsail 的列表、狀態查詢與電源操作依此分流。
 
 ## 已知建置注意事項
 

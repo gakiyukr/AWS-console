@@ -2,7 +2,6 @@
 
 import { Button } from "@heroui/react/button";
 import {
-  Activity,
   CloudCog,
   KeyRound,
   Menu,
@@ -18,9 +17,8 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 const navigation = [
-  { href: "/", label: "機器總覽", icon: Activity },
-  { href: "/ec2", label: "EC2 部署", icon: Server },
-  { href: "/lightsail", label: "Lightsail 部署", icon: Zap },
+  { href: "/ec2", label: "EC2", icon: Server },
+  { href: "/lightsail", label: "Lightsail", icon: Zap },
   { href: "/logs", label: "操作日誌", icon: ScrollText },
   { href: "/accounts", label: "帳號管理", icon: KeyRound },
   { href: "/share", label: "分享連結", icon: Share2 },

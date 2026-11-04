@@ -2,14 +2,14 @@
 // 讓既有的電源管理功能能立即接管 Wavelength、區域 EC2 與 forwarder。
 import { createMachine } from "./db.js";
 
-function addCandidate(candidates, instanceId, isWavelength) {
+function addCandidate(candidates, instanceId, isWavelength, platform = "ec2") {
   if (typeof instanceId !== "string" || instanceId.length === 0) {
     return;
   }
   if (candidates.some((candidate) => candidate.instanceId === instanceId)) {
     return;
   }
-  candidates.push({ instanceId, isWavelength });
+  candidates.push({ instanceId, isWavelength, platform });
 }
 
 /**
@@ -32,7 +32,7 @@ function collectDeploymentMachines(deploymentType, result) {
       addCandidate(candidates, result?.forwarder?.instance_id, false);
       break;
     case "lightsail":
-      addCandidate(candidates, result?.instance_id, false);
+      addCandidate(candidates, result?.instance_id, false, "lightsail");
       break;
     default:
       throw new Error("不支援的部署類型");
@@ -64,6 +64,7 @@ export async function registerDeploymentMachines(db, deploymentType, region, res
         // 留空可在首次狀態同步時採用 AWS 的 Name 標籤。
         name: "",
         isWavelength: candidate.isWavelength,
+        platform: candidate.platform,
       });
       return {
         ...candidate,

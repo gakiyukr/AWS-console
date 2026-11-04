@@ -29,6 +29,10 @@ export async function POST(
   if (!machine) {
     return errorResponse(400, "指定的機器不在清單內。");
   }
+  // Lightsail 沒有 stop→start 換 IP 的機制（靜態 IP 需另行 allocate/attach）
+  if (machine.platform === "lightsail") {
+    return errorResponse(400, "Lightsail 執行個體不支援更換公網 IP。");
+  }
 
   try {
     const { awsEnv } = await resolveAwsAccount(env, machine.awsAccountId);

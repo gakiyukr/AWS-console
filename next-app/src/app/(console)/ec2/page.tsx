@@ -1,22 +1,20 @@
 'use client'
 
-// EC2 部署：以「帳號 → Region → VPC → OS → 登入憑證」表單建立一般區域
-// EC2，部署流程以 SSE 即時回報進度，結果含連線資訊可複製／下載。
-import { useEffect, useState } from "react";
-import { Check, Clipboard, Download, Loader2, RefreshCw, Server, Trash2 } from "lucide-react";
+// EC2 機器總覽：D1 清單 × DescribeInstances 即時狀態。電源操作與移除
+// 先經確認對話框；新增機器以「帳號 → Region → 執行個體」三層下拉由
+// 後端即時列出候選，或直接前往「新增 EC2」部署一台新機。
+import Link from "next/link";
+import { useState } from "react";
+import { Loader2, Plus, RefreshCw, Server } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
-import { readJson, toastDanger } from "@/lib/api-client";
-import { regionLabel } from "@/lib/regions";
-import { readDeploymentStream } from "@/lib/deployment-stream";
-import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
-
-interface SelectOption {
-  value: string
-  label: string
-}
+import { Modal } from "@heroui/react/modal";
+import { ConfirmDialog, MachineName } from "@/components/confirm-dialog";
+import { MachineTable } from "@/components/machine-table";
+import { readError, readJson, toastDanger } from "@/lib/api-client";
+import { useMachines } from "@/lib/use-machines";
 
 interface AwsAccountOption {
   id: number
@@ -25,495 +23,342 @@ interface AwsAccountOption {
   isDefault: boolean
 }
 
-interface ProgressEntry {
-  time: string
-  message: string
-  details?: Record<string, unknown>
+interface InstanceOption {
+  instanceId: string
+  name: string
+  state: string
+  isWavelength: boolean
 }
 
-const STAGE_LABELS: Record<string, string> = {
-  validating: "開始驗證部署輸入",
-  ensure_vpc_ipv6: "確保 VPC IPv6 CIDR",
-  ensure_subnet_ipv6: "確保子網 IPv6 CIDR",
-  ensure_ipv6_route: "設定 IPv6 公網路由",
-  ensure_ipv6_sg: "設定 IPv6 安全群組規則",
-  waiting_vpc_ipv6: "等待 VPC IPv6 CIDR 關聯完成",
-  waiting_subnet_ipv6: "等待子網 IPv6 CIDR 關聯完成",
-  resources_ready: "網路資源已就緒",
-  credentials_ready: "登入憑證已套用",
-  instance_launched: "EC2 執行個體已啟動",
-  waiting_for_running: "等待執行個體進入 running",
-  instance_running: "執行個體已進入 running",
-  waiting_for_public_dns: "等待公網 DNS",
-  public_dns_ready: "公網 DNS 已就緒",
-  waiting_for_status_checks: "等待狀態檢查",
-  status_check_progress: "狀態檢查進度",
-  status_checks_passed: "狀態檢查已通過",
-  waiting_for_cloud_init: "等待 cloud-init 完成",
-  cloud_init_complete: "cloud-init 已完成",
+const EMPTY_ADD_FORM = {
+  awsAccountId: null as number | null,
+  region: "",
+  instanceId: "",
+  name: "",
+  isWavelength: false,
 };
 
+export default function Ec2OverviewPage() {
+  const { machines, loading, refreshing, actionPendingId, busyPending, refresh, actions, dialogs } =
+    useMachines("ec2");
 
-export default function Ec2Page() {
+  // ── 新增機器（從既有 AWS 執行個體挑選） ────────────────────
+  const [addOpen, setAddOpen] = useState(false);
+  const [addForm, setAddForm] = useState(EMPTY_ADD_FORM);
+  const [adding, setAdding] = useState(false);
   const [accounts, setAccounts] = useState<AwsAccountOption[]>([]);
   const [regions, setRegions] = useState<string[]>([]);
-  const [vpcs, setVpcs] = useState<SelectOption[]>([]);
-  const [osOptions, setOsOptions] = useState<SelectOption[]>([]);
-  const [sshKeys, setSshKeys] = useState<SshPublicKeyOption[]>([]);
-  const [form, setForm] = useState({
-    accountId: null as number | null,
-    region: "",
-    vpcId: "",
-    os: "",
-    credentialType: "ssh_key" as "ssh_key" | "password",
-    sshKeyId: null as number | null,
-    rootPassword: "",
-    ipv6: false,
-  });
-  const [loadingKeys, setLoadingKeys] = useState(false);
-  const [loadingInitial, setLoadingInitial] = useState(true);
-  const [loadingVpcs, setLoadingVpcs] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
-  const [progress, setProgress] = useState<ProgressEntry[]>([]);
+  const [instances, setInstances] = useState<InstanceOption[]>([]);
+  const [loadingRegions, setLoadingRegions] = useState(false);
+  const [loadingInstances, setLoadingInstances] = useState(false);
 
-  const resultText = result ? JSON.stringify(result, null, 2) : "";
+  const stats = {
+    running: machines.filter(machine => machine.state === "running").length,
+    stopped: machines.filter(machine => machine.state === "stopped").length,
+    wavelength: machines.filter(machine => machine.isWavelength).length,
+    regions: new Set(machines.map(machine => machine.region)).size,
+  };
 
-  function appendProgress(message: string, details?: Record<string, unknown>) {
-    setProgress(previous => [
-      ...previous,
-      {
-        time: new Date().toLocaleTimeString("zh-TW"),
-        message,
-        ...(details ? { details } : {}),
-      },
-    ]);
-  }
-
-  // 載入 D1 公鑰庫供憑證下拉選擇；既有選擇失效時回落到第一把
-  async function loadSshKeys() {
-    setLoadingKeys(true);
+  async function openAddDialog() {
+    setAddForm(EMPTY_ADD_FORM);
+    setRegions([]);
+    setInstances([]);
+    setAddOpen(true);
     try {
-      const response = await fetch("/api/ssh-keys");
-      if (!response.ok) throw new Error("載入 SSH 公鑰失敗");
-      const payload = await readJson<{ keys?: SshPublicKeyOption[] }>(response);
-      const keys: SshPublicKeyOption[] = payload.keys || [];
-      setSshKeys(keys);
-      setForm(previous => ({
-        ...previous,
-        sshKeyId: previous.sshKeyId && keys.some(key => key.id === previous.sshKeyId)
-          ? previous.sshKeyId
-          : keys[0]?.id ?? null,
-      }));
-    } catch {
-      toastDanger("載入 SSH 公鑰失敗");
-    } finally {
-      setLoadingKeys(false);
+      const response = await fetch("/api/accounts");
+      if (!response.ok) throw new Error(await readError(response));
+      const payload = await readJson<{ accounts?: AwsAccountOption[] }>(response);
+      const enabled = (payload.accounts || []).filter(account => account.enabled);
+      setAccounts(enabled);
+      const preferred = enabled.find(account => account.isDefault) || enabled[0];
+      if (preferred) {
+        setAddForm(previous => ({ ...previous, awsAccountId: preferred.id }));
+        await loadRegions(preferred.id);
+      }
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "載入帳號失敗");
     }
   }
 
-  async function loadRegions(accountId: number | null) {
-    setRegions([]);
-    setForm(previous => ({ ...previous, region: "", vpcId: "" }));
-    if (!accountId) return;
+  async function loadRegions(accountId: number) {
+    setLoadingRegions(true);
     try {
       const response = await fetch(`/api/ec2/regions?account_id=${accountId}`);
-      if (!response.ok) throw new Error("載入 EC2 Region 失敗");
+      if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<{ regions?: string[] }>(response);
       setRegions(payload.regions || []);
     } catch {
-      toastDanger("載入 EC2 Region 失敗");
+      toastDanger("載入地區失敗");
+    } finally {
+      setLoadingRegions(false);
     }
   }
 
-  async function loadInitialOptions() {
-    setLoadingInitial(true);
+  async function loadInstances(accountId: number, region: string) {
+    if (!region) return;
+    setLoadingInstances(true);
     try {
-      const [accountResponse, osResponse] = await Promise.all([
-        fetch("/api/accounts"),
-        fetch("/api/ec2/os-options"),
-      ]);
-      if (!accountResponse.ok || !osResponse.ok) {
-        throw new Error("載入 EC2 部署選項失敗");
-      }
-      const accountPayload = await readJson<{ accounts: AwsAccountOption[] }>(accountResponse);
-      const osPayload = await readJson<{ os?: SelectOption[] }>(osResponse);
-      const enabled: AwsAccountOption[] = accountPayload.accounts.filter(
-        (account: AwsAccountOption) => account.enabled,
+      const response = await fetch(
+        `/api/ec2/instances?account_id=${accountId}&region=${encodeURIComponent(region)}`,
       );
-      const firstAccount = enabled.find(account => account.isDefault) || enabled[0];
-      const os: SelectOption[] = osPayload.os || [];
-      setAccounts(enabled);
-      setOsOptions(os);
-      // 重新載入時保留目前選取的帳號（若仍啟用）；loadRegions 會清空
-      // region/vpc，重新套用預設帳號等於丟掉使用者已完成的選擇。
-      const activeAccount = form.accountId && enabled.some(account => account.id === form.accountId)
-        ? enabled.find(account => account.id === form.accountId) ?? null
-        : firstAccount;
-      setForm(previous => ({
-        ...previous,
-        accountId: activeAccount?.id ?? null,
-        os: previous.os || os[0]?.value || "",
-      }));
-      if (activeAccount) await loadRegions(activeAccount.id);
+      if (!response.ok) throw new Error(await readError(response));
+      setInstances(await readJson<InstanceOption[]>(response));
     } catch {
-      toastDanger("載入 EC2 部署選項失敗");
+      toastDanger("載入執行個體失敗");
     } finally {
-      setLoadingInitial(false);
+      setLoadingInstances(false);
     }
   }
 
-  async function loadVpcs(accountId: number | null, region: string) {
-    setVpcs([]);
-    setForm(previous => ({ ...previous, vpcId: "" }));
-    if (!accountId || !region) return;
-
-    setLoadingVpcs(true);
+  async function submitAdd() {
+    setAdding(true);
     try {
-      const response = await fetch(`/api/ec2/vpcs?account_id=${accountId}&region=${encodeURIComponent(region)}`);
-      if (!response.ok) throw new Error("載入 VPC 失敗");
-      const payload = await readJson<{ vpcs?: SelectOption[] }>(response);
-      setVpcs(payload.vpcs || []);
-    } catch {
-      toastDanger("載入 VPC 失敗");
-    } finally {
-      setLoadingVpcs(false);
-    }
-  }
-
-  function selectAccount(accountId: number | null) {
-    setForm(previous => ({ ...previous, accountId }));
-    void loadRegions(accountId);
-  }
-
-  function selectRegion(region: string) {
-    setForm(previous => ({ ...previous, region }));
-    void loadVpcs(form.accountId, region);
-  }
-
-  useEffect(() => {
-    // 首次掛載載入帳號、Region、OS 選項與公鑰；載入函式各自管理
-    // loading 狀態與錯誤提示，故此處無需額外的取消旗標。
-    async function init() {
-      await Promise.all([loadInitialOptions(), loadSshKeys()]);
-    }
-    void init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 部署請求的憑證欄位：公鑰模式帶 D1 列 id，密碼模式帶本次輸入的明碼
-  function credentialPayload() {
-    return form.credentialType === "ssh_key"
-      ? { credential_type: "ssh_key", ssh_key_id: form.sshKeyId }
-      : { credential_type: "password", root_password: form.rootPassword };
-  }
-
-  async function deployEc2() {
-    if (busy) return;
-    setBusy(true);
-    setResult(null);
-    appendProgress("開始部署一般 EC2");
-    try {
-      const response = await fetch("/api/ec2/deploy", {
+      const response = await fetch("/api/machines", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          account_id: form.accountId,
-          region: form.region,
-          vpc_id: form.vpcId,
-          os: form.os,
-          ipv6: form.ipv6,
-          ...credentialPayload(),
-        }),
+        body: JSON.stringify({ ...addForm, platform: "ec2" }),
       });
-      const finalResult = await readDeploymentStream(response, {
-        onProgress: appendProgress,
-        stageLabels: STAGE_LABELS,
-      });
-      setResult(finalResult);
-      appendProgress("一般 EC2 部署流程完成", finalResult);
-      toast.success("一般 EC2 部署流程完成");
+      if (!response.ok) throw new Error(await readError(response));
+      toast.success("機器已新增");
+      setAddOpen(false);
+      await refresh();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "EC2 部署失敗";
-      appendProgress(message);
-      toastDanger(message);
+      toastDanger(error instanceof Error ? error.message : "新增失敗");
     } finally {
-      setBusy(false);
+      setAdding(false);
     }
   }
-
-  async function copyResult() {
-    if (!resultText) return;
-    await navigator.clipboard.writeText(resultText);
-    toast.success("部署結果已複製");
-  }
-
-  function downloadResult() {
-    if (!resultText) return;
-    const blob = new Blob([resultText], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `aws-ec2-result-${new Date().toISOString().replaceAll(":", "-")}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function reloadOptions() {
-    void loadInitialOptions();
-    void loadSshKeys();
-  }
-
-  const credentialReady = form.credentialType === "ssh_key"
-    ? Boolean(form.sshKeyId)
-    : form.rootPassword.length >= 8 && form.rootPassword.length <= 128;
-  const canDeploy = Boolean(form.accountId && form.region && form.vpcId && form.os && credentialReady);
-  const selectClassName = "h-9 rounded-md border bg-background px-3 text-sm";
 
   return (
     <div className="flex w-full flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">EC2 部署</h2>
-          <p className="text-sm text-muted">在一般 AWS Region 建立可從公網連線的 EC2 執行個體</p>
+          <h2 className="text-2xl font-bold tracking-tight">EC2</h2>
+          <p className="text-sm text-muted">管理 EC2 執行個體的電源狀態與網路設定</p>
         </div>
-        <Button variant="secondary" size="sm" isDisabled={loadingInitial || busy} onPress={reloadOptions}>
-          {loadingInitial ? <Loader2 aria-hidden size={16} className="animate-spin" /> : <RefreshCw aria-hidden size={16} />}
-          重新載入選項
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onPress={openAddDialog}>
+            <Plus aria-hidden size={16} />
+            加入既有機器
+          </Button>
+          <Link
+            href="/ec2/new"
+            className="inline-flex h-8 items-center gap-2 rounded-md bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] transition-opacity hover:opacity-90"
+          >
+            <Server aria-hidden size={16} />
+            新增 EC2
+          </Link>
+          <Button variant="secondary" size="sm" isDisabled={refreshing} onPress={refresh}>
+            {refreshing ? <Loader2 aria-hidden size={16} className="animate-spin" /> : <RefreshCw aria-hidden size={16} />}
+            重新整理
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: "運行中", value: stats.running },
+          { label: "已停止", value: stats.stopped },
+          { label: "Wavelength 執行個體", value: stats.wavelength },
+          { label: "涵蓋地區", value: stats.regions },
+        ].map(stat => (
+          <Card key={stat.label}>
+            <Card.Content className="grid gap-1 p-6">
+              <p className="text-sm text-muted">{stat.label}</p>
+              <p className="text-3xl font-semibold tabular-nums">{stat.value}</p>
+            </Card.Content>
+          </Card>
+        ))}
       </div>
 
       <Card>
-        <Card.Content className="grid gap-4 p-6">
-          <div>
-            <h3 className="flex items-center gap-2 text-base font-semibold">
-              <Server aria-hidden size={16} />
-              部署參數
-            </h3>
-            <p className="text-sm text-muted">一般 EC2 固定使用 t3.nano，部署後會自動加入機器總覽</p>
-          </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="grid content-start gap-2">
-              <label htmlFor="ec2-account" className="text-sm font-medium">AWS 帳號</label>
-              <select
-                id="ec2-account"
-                className={selectClassName}
-                disabled={loadingInitial || busy}
-                value={form.accountId ?? ""}
-                onChange={event => selectAccount(event.target.value ? Number(event.target.value) : null)}
-              >
-                <option value="" disabled>請選擇 AWS 帳號</option>
-                {accounts.map(account => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}{account.isDefault ? "（預設）" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid content-start gap-2">
-              <label htmlFor="ec2-region" className="text-sm font-medium">Region</label>
-              <select
-                id="ec2-region"
-                className={selectClassName}
-                disabled={!form.accountId || loadingInitial || busy}
-                value={form.region}
-                onChange={event => selectRegion(event.target.value)}
-              >
-                <option value="">請選擇 Region</option>
-                {regions.map(region => (
-                  <option key={region} value={region}>{regionLabel(region)}</option>
-                ))}
-              </select>
-            </div>
-            <div className="grid content-start gap-2">
-              <label htmlFor="ec2-vpc" className="text-sm font-medium">VPC</label>
-              <select
-                id="ec2-vpc"
-                className={selectClassName}
-                disabled={!form.region || loadingVpcs || busy}
-                value={form.vpcId}
-                onChange={event => setForm(previous => ({ ...previous, vpcId: event.target.value }))}
-              >
-                <option value="">{loadingVpcs ? "載入中..." : "請選擇 VPC"}</option>
-                {vpcs.map(vpc => (
-                  <option key={vpc.value} value={vpc.value}>{vpc.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="grid content-start gap-2">
-              <label htmlFor="ec2-os" className="text-sm font-medium">作業系統</label>
-              <select
-                id="ec2-os"
-                className={selectClassName}
-                disabled={loadingInitial || busy}
-                value={form.os}
-                onChange={event => setForm(previous => ({ ...previous, os: event.target.value }))}
-              >
-                <option value="">請選擇作業系統</option>
-                {osOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* IPv6：完整開通（VPC/子網 CIDR、IGW 路由、安全群組規則） */}
-          <div className="flex items-center rounded-md border p-4">
-            <label htmlFor="ec2-ipv6" className="flex items-center gap-2 text-sm">
-              <input
-                id="ec2-ipv6"
-                type="checkbox"
-                className="h-4 w-4"
-                checked={form.ipv6}
-                disabled={busy}
-                onChange={event => setForm(previous => ({ ...previous, ipv6: event.target.checked }))}
-              />
-              啟用 IPv6（完整開通：CIDR、公網路由與安全群組規則）
-            </label>
-          </div>
-
-          {/* 登入憑證：公鑰取自 D1 公鑰庫，密碼僅存在於本次請求 */}
-          <div className="grid grid-cols-1 gap-4 rounded-md border p-4 md:grid-cols-2">
-            <div className="grid content-start gap-2">
-              <label htmlFor="ec2-credential-type" className="text-sm font-medium">登入憑證</label>
-              <select
-                id="ec2-credential-type"
-                className={selectClassName}
-                disabled={busy}
-                value={form.credentialType}
-                onChange={event => setForm(previous => ({
-                  ...previous,
-                  credentialType: event.target.value as "ssh_key" | "password",
-                }))}
-              >
-                <option value="ssh_key">SSH 公鑰</option>
-                <option value="password">自訂密碼</option>
-              </select>
-              <p className="text-xs text-muted">
-                公鑰登入會停用 root 密碼認證；自訂密碼不會被儲存，部署後請自行妥善保管。
-              </p>
-            </div>
-            {form.credentialType === "ssh_key" ? (
-              <div className="grid content-start gap-2">
-                <label htmlFor="ec2-ssh-key" className="text-sm font-medium">SSH 公鑰</label>
-                <select
-                  id="ec2-ssh-key"
-                  className={selectClassName}
-                  disabled={loadingKeys || busy}
-                  value={form.sshKeyId ?? ""}
-                  onChange={event => setForm(previous => ({
-                    ...previous,
-                    sshKeyId: event.target.value ? Number(event.target.value) : null,
-                  }))}
-                >
-                  <option value="" disabled>{loadingKeys ? "載入中..." : "請選擇公鑰"}</option>
-                  {sshKeys.map(key => (
-                    <option key={key.id} value={key.id}>
-                      {key.label}（{sshKeyTypeLabel(key.publicKey)}）
-                    </option>
-                  ))}
-                </select>
-                {!loadingKeys && sshKeys.length === 0 ? (
-                  <p className="text-xs text-amber-600">尚無公鑰，請先到設定頁新增，或改用自訂密碼。</p>
-                ) : null}
-              </div>
-            ) : (
-              <div className="grid content-start gap-2">
-                <label htmlFor="ec2-root-password" className="text-sm font-medium">root 密碼</label>
-                <Input
-                  id="ec2-root-password"
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder="8–128 字元"
-                  disabled={busy}
-                  value={form.rootPassword}
-                  onChange={event => setForm(previous => ({ ...previous, rootPassword: event.target.value }))}
-                />
-                <p className="text-xs text-muted">密碼僅用於本次部署，不會寫入資料庫或日誌。</p>
-              </div>
-            )}
-          </div>
-
-          <div className="flex justify-end border-t pt-4">
-            <Button isDisabled={!canDeploy || busy} onPress={deployEc2}>
-              {busy ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-              部署 EC2
-            </Button>
-          </div>
+        <Card.Content className="p-6">
+          <MachineTable
+            machines={machines}
+            loading={loading}
+            refreshing={refreshing}
+            actionPendingId={actionPendingId}
+            busyPending={busyPending}
+            platform="ec2"
+            emptyText="清單中還沒有 EC2 機器。"
+            onRefresh={refresh}
+            actions={actions}
+          />
         </Card.Content>
       </Card>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Card>
-          <Card.Content className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-semibold">本次部署進度</h3>
-                <p className="text-sm text-muted">EC2 建立與就緒狀態會即時顯示於此</p>
-              </div>
-              <Button
-                variant="ghost"
-                aria-label="清空進度"
-                isDisabled={progress.length === 0 || busy}
-                onPress={() => setProgress([])}
-              >
-                <Trash2 aria-hidden size={16} />
-              </Button>
-            </div>
-            {progress.length === 0 ? (
-              <div className="py-8 text-center text-sm text-muted">尚未執行部署</div>
-            ) : (
-              <div className="mt-4 h-80 overflow-y-auto rounded-md border">
-                <div className="divide-y">
-                  {progress.map((entry, index) => (
-                    <div key={index} className="p-3 text-sm">
-                      <div className="flex gap-2">
-                        <span className="shrink-0 font-mono text-xs text-muted">{entry.time}</span>
-                        <span>{entry.message}</span>
-                      </div>
-                      {entry.details ? (
-                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-muted">
-                          {JSON.stringify(entry.details, null, 2)}
-                        </pre>
-                      ) : null}
-                    </div>
-                  ))}
+      {/* 加入既有機器 */}
+      <Modal.Root isOpen={addOpen} onOpenChange={setAddOpen}>
+        <Modal.Backdrop>
+          <Modal.Container size="md">
+            <Modal.Dialog>
+              <Modal.Header>
+                <Modal.Heading>加入既有 EC2 機器</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body className="grid gap-4">
+                <div className="grid gap-2">
+                  <label htmlFor="add-account" className="text-sm font-medium">AWS 帳號</label>
+                  <select
+                    id="add-account"
+                    className="h-9 rounded-md border bg-background px-3 text-sm"
+                    value={addForm.awsAccountId ?? ""}
+                    onChange={event => {
+                      const accountId = Number(event.target.value);
+                      setAddForm({ ...EMPTY_ADD_FORM, awsAccountId: accountId });
+                      setInstances([]);
+                      void loadRegions(accountId);
+                    }}
+                  >
+                    {accounts.map(account => (
+                      <option key={account.id} value={account.id}>{account.name}</option>
+                    ))}
+                  </select>
                 </div>
-              </div>
-            )}
-          </Card.Content>
-        </Card>
+                <div className="grid gap-2">
+                  <label htmlFor="add-region" className="text-sm font-medium">地區</label>
+                  <select
+                    id="add-region"
+                    className="h-9 rounded-md border bg-background px-3 text-sm"
+                    value={addForm.region}
+                    disabled={loadingRegions}
+                    onChange={event => {
+                      const region = event.target.value;
+                      setAddForm(previous => ({ ...previous, region, instanceId: "" }));
+                      if (addForm.awsAccountId) void loadInstances(addForm.awsAccountId, region);
+                    }}
+                  >
+                    <option value="">請選擇地區</option>
+                    {regions.map(region => (
+                      <option key={region} value={region}>{region}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="add-instance" className="text-sm font-medium">執行個體</label>
+                  <select
+                    id="add-instance"
+                    className="h-9 rounded-md border bg-background px-3 text-sm"
+                    value={addForm.instanceId}
+                    disabled={loadingInstances || instances.length === 0}
+                    onChange={event => {
+                      const selected = instances.find(item => item.instanceId === event.target.value);
+                      setAddForm(previous => ({
+                        ...previous,
+                        instanceId: event.target.value,
+                        name: selected?.name || event.target.value,
+                        isWavelength: Boolean(selected?.isWavelength),
+                      }));
+                    }}
+                  >
+                    <option value="">{loadingInstances ? "載入中…" : "請選擇執行個體"}</option>
+                    {instances.map(instance => (
+                      <option key={instance.instanceId} value={instance.instanceId}>
+                        {instance.name || instance.instanceId}（{instance.state}）
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="add-name" className="text-sm font-medium">顯示名稱</label>
+                  <Input
+                    id="add-name"
+                    value={addForm.name}
+                    onChange={event => setAddForm(previous => ({ ...previous, name: event.target.value }))}
+                  />
+                </div>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="secondary" onPress={() => setAddOpen(false)}>取消</Button>
+                <Button
+                  isDisabled={adding || !addForm.awsAccountId || !addForm.region || !addForm.instanceId || !addForm.name}
+                  onPress={submitAdd}
+                >
+                  {adding ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
+                  加入
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
 
-        <Card>
-          <Card.Content className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-semibold">部署結果</h3>
-                <p className="text-sm text-muted">包含 EC2 連線資訊，請妥善保存連線憑證</p>
-              </div>
-              <div className="flex gap-1">
-                <Button variant="ghost" aria-label="複製結果" isDisabled={!result} onPress={copyResult}>
-                  <Clipboard aria-hidden size={16} />
-                </Button>
-                <Button variant="ghost" aria-label="下載 JSON" isDisabled={!result} onPress={downloadResult}>
-                  <Download aria-hidden size={16} />
-                </Button>
-              </div>
-            </div>
-            {!result ? (
-              <div className="flex items-center justify-center py-8 text-sm text-muted">
-                {busy ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-                {busy ? "部署流程執行中" : "尚無部署結果"}
-              </div>
-            ) : (
-              <div className="relative mt-4">
-                <Check aria-hidden size={16} className="absolute right-3 top-3 text-green-600" />
-                <pre className="h-80 overflow-auto rounded-md border bg-muted/40 p-3 pr-10 text-xs">{resultText}</pre>
-              </div>
-            )}
-          </Card.Content>
-        </Card>
-      </div>
+      {/* 確認對話框 */}
+      <ConfirmDialog
+        open={dialogs.stop.open}
+        onOpenChange={dialogs.stop.setOpen}
+        title="確認關閉機器"
+        confirmLabel="關閉"
+        onConfirm={dialogs.stop.confirm}
+      >
+        確定要關閉 <MachineName machine={dialogs.stop.target} /> 嗎？關機後 SSH 連線會中斷。
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialogs.reboot.open}
+        onOpenChange={dialogs.reboot.setOpen}
+        title="確認重啟機器"
+        confirmLabel="重啟"
+        onConfirm={dialogs.reboot.confirm}
+      >
+        確定要重啟 <MachineName machine={dialogs.reboot.target} /> 嗎？重啟不會更換公網 IP。
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialogs.terminate.open}
+        onOpenChange={dialogs.terminate.setOpen}
+        title="確認終止執行個體"
+        confirmLabel="終止"
+        danger
+        onConfirm={dialogs.terminate.confirm}
+      >
+        確定要終止 <MachineName machine={dialogs.terminate.target} /> 嗎？執行個體將被永久刪除，此操作無法復原。
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialogs.rebootIp.open}
+        onOpenChange={dialogs.rebootIp.setOpen}
+        title="確認更換公網 IP"
+        confirmLabel="更換 IP"
+        pending={dialogs.rebootIp.pending}
+        onConfirm={dialogs.rebootIp.confirm}
+      >
+        確定要更換 <MachineName machine={dialogs.rebootIp.target} /> 的公網 IP 嗎？此操作將：
+        <br />
+        • 暫時關閉執行個體（中斷 SSH 連線）
+        <br />
+        • 自動啟動執行個體
+        <br />
+        • 分配新的公網 IP／DNS
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialogs.ipv6.open}
+        onOpenChange={dialogs.ipv6.setOpen}
+        title="確認開通 IPv6"
+        confirmLabel="開通 IPv6"
+        pending={dialogs.ipv6.pending}
+        onConfirm={dialogs.ipv6.confirm}
+      >
+        確定要為 <MachineName machine={dialogs.ipv6.target} /> 開通 IPv6 嗎？此操作將：
+        <br />
+        • 為 VPC／子網關聯 IPv6 CIDR（若尚未具備）
+        <br />
+        • 加入 Internet Gateway 的 <code>::/0</code> 路由與安全群組規則
+        <br />
+        • 指派 IPv6 位址並<strong>重新開機一次</strong>（約 1 分鐘，不會更換 IPv4 公網 IP）
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialogs.remove.open}
+        onOpenChange={dialogs.remove.setOpen}
+        title="移除機器"
+        confirmLabel="移除"
+        danger
+        pending={dialogs.remove.pending}
+        onConfirm={dialogs.remove.confirm}
+      >
+        確定要將 <MachineName machine={dialogs.remove.target} /> 從清單移除嗎？只會移除清單記錄，AWS 上的執行個體不受影響。
+      </ConfirmDialog>
     </div>
   );
 }

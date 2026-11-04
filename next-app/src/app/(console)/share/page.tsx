@@ -36,6 +36,7 @@ interface MachineOption {
   id: number
   name: string
   state: string | null
+  platform: string
 }
 
 // D1 datetime('now') 為 UTC 且無時區標記，補成 ISO 格式再轉本地時間
@@ -331,7 +332,7 @@ export default function ShareLinksPage() {
               <div className="grid gap-2">
                 <span className="text-sm font-medium">綁定機器</span>
                 {machines.length === 0 ? (
-                  <p className="text-xs text-muted">機器清單是空的，請先在機器總覽新增機器。</p>
+                  <p className="text-xs text-muted">機器清單是空的，請先到 EC2 或 Lightsail 頁新增機器。</p>
                 ) : (
                   <div className="max-h-56 overflow-y-auto rounded-md border p-2">
                     {machines.map(machine => (
@@ -345,7 +346,10 @@ export default function ShareLinksPage() {
                           checked={selectedIds.includes(machine.id)}
                           onChange={() => toggleSelected(machine.id)}
                         />
-                        <span className="truncate">{machine.name}</span>
+                        <span className="min-w-0 flex-1 truncate">{machine.name}</span>
+                        <Chip variant="soft" size="sm">
+                          {machine.platform === "lightsail" ? "Lightsail" : "EC2"}
+                        </Chip>
                       </label>
                     ))}
                   </div>

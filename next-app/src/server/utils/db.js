@@ -11,14 +11,18 @@ import {
 // ─── 機器清單 ───────────────────────────────────────────────
 
 /**
- * 取得全部受管機器（依新增順序）。
+ * 取得受管機器（依新增順序）。可依平台篩選（"ec2" | "lightsail"），
+ * 省略時回傳全部——分享連結管理頁需要跨平台清單。
  * @param {D1Database} db
- * @returns {Promise<Array<{id:number, awsAccountId:number|null, region:string, instanceId:string, name:string, isWavelength:boolean, createdAt:string}>>}
+ * @param {"ec2" | "lightsail" | null} [platform]
+ * @returns {Promise<Array<{id:number, awsAccountId:number|null, region:string, instanceId:string, name:string, platform:string, isWavelength:boolean, createdAt:string}>>}
  */
-export async function listMachines(db) {
-  const { results } = await db
-    .prepare("SELECT id, aws_account_id AS awsAccountId, region, instance_id AS instanceId, name, is_wavelength AS isWavelength, created_at AS createdAt FROM machines ORDER BY id")
-    .all();
+export async function listMachines(db, platform = null) {
+  const base = "SELECT id, aws_account_id AS awsAccountId, region, instance_id AS instanceId, name, platform, is_wavelength AS isWavelength, created_at AS createdAt FROM machines";
+  const statement = platform
+    ? db.prepare(`${base} WHERE platform = ?1 ORDER BY id`).bind(platform)
+    : db.prepare(`${base} ORDER BY id`);
+  const { results } = await statement.all();
   // is_wavelength 以 0/1 儲存，統一在此轉為布林，避免各呼叫端重複轉換
   return results.map((row) => ({ ...row, isWavelength: Boolean(row.isWavelength) }));
 }
@@ -28,11 +32,11 @@ export async function listMachines(db) {
  * 讓路由層能回應 409 語意而不需解析 SQLite 錯誤字串。
  * @returns {Promise<{id:number}|null>} null 表示已存在
  */
-export async function createMachine(db, { awsAccountId = /** @type {number|null} */ (null), region, instanceId, name, isWavelength }) {
+export async function createMachine(db, { awsAccountId = /** @type {number|null} */ (null), region, instanceId, name, isWavelength, platform = "ec2" }) {
   try {
     const result = await db
-      .prepare("INSERT INTO machines (aws_account_id, region, instance_id, name, is_wavelength) VALUES (?1, ?2, ?3, ?4, ?5)")
-      .bind(awsAccountId, region, instanceId, name, isWavelength ? 1 : 0)
+      .prepare("INSERT INTO machines (aws_account_id, region, instance_id, name, is_wavelength, platform) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
+      .bind(awsAccountId, region, instanceId, name, isWavelength ? 1 : 0, platform)
       .run();
     return { id: result.meta.last_row_id };
   } catch (error) {
@@ -47,7 +51,7 @@ export async function createMachine(db, { awsAccountId = /** @type {number|null}
 /** 依主鍵取得單一機器；不存在回 null。 */
 export async function getMachineById(db, id) {
   const row = await db
-    .prepare("SELECT id, aws_account_id AS awsAccountId, region, instance_id AS instanceId, name, is_wavelength AS isWavelength FROM machines WHERE id = ?1")
+    .prepare("SELECT id, aws_account_id AS awsAccountId, region, instance_id AS instanceId, name, platform, is_wavelength AS isWavelength FROM machines WHERE id = ?1")
     .bind(id)
     .first();
   return row ? { ...row, isWavelength: Boolean(row.isWavelength) } : null;

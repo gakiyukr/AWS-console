@@ -66,7 +66,11 @@ export { AwsRequestError };
  * @returns {Promise<object>} JSON 回應物件
  */
 export async function lightsailQuery(region, env, operation, params = {}) {
-  const { ACCESS_KEY, SECRET_ACCESS_KEY, SESSION_TOKEN } = env;
+  // 憑證名稱必須與 resolveAwsAccount 產生的 awsEnv 一致（AWS_* 前綴）；
+  // 舊版讀 ACCESS_KEY 等裸名稱，導致每次呼叫都在簽章前誤判憑證不完整。
+  const ACCESS_KEY = env.AWS_ACCESS_KEY_ID;
+  const SECRET_ACCESS_KEY = env.AWS_SECRET_ACCESS_KEY;
+  const SESSION_TOKEN = env.AWS_SESSION_TOKEN;
   if (!ACCESS_KEY || !SECRET_ACCESS_KEY) {
     throw new AwsRequestError("AWS 憑證不完整。", 500);
   }

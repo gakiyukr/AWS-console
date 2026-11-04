@@ -33,11 +33,17 @@ const ACTION_LABELS: Record<string, string> = {
   reboot: "重啟執行個體",
   terminate: "終止執行個體",
   "reboot-ip": "更換公網 IP",
+  "enable-ipv6": "開通 IPv6",
   machine_remove: "自清單移除機器",
   init_zone: "初始化 WL Zone",
   deploy_wavelength: "部署 Wavelength EC2",
   deploy_regional: "部署一般 EC2",
   deploy_forwarder: "部署 SSH forwarder",
+  deploy_lightsail: "部署 Lightsail 執行個體",
+  share_link_create: "建立分享連結",
+  share_link_delete: "刪除分享連結",
+  share_setting_update: "更新分享設定",
+  "share-reboot-ip": "訪客更換公網 IP",
   enable_region: "開通 Region",
 };
 

@@ -3,6 +3,7 @@
 // terminate 為不可逆操作：成功後該執行個體將被 AWS 永久刪除，同時移除 D1 清單記錄。
 import { appendOperationLog, deleteMachine, getMachineById } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
+import { performLightsailPowerAction } from "@/server/utils/lightsail-power.js";
 import { performPowerAction } from "@/server/utils/power.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
@@ -59,7 +60,12 @@ export async function POST(
 
   try {
     const { awsEnv } = await resolveAwsAccount(env, machine.awsAccountId);
-    await performPowerAction(awsEnv, machine, powerAction);
+    // 依平台分流：Lightsail 用 StartInstance/StopInstance/RebootInstance/DeleteInstance
+    if (machine.platform === "lightsail") {
+      await performLightsailPowerAction(awsEnv, machine, powerAction);
+    } else {
+      await performPowerAction(awsEnv, machine, powerAction);
+    }
   } catch (error) {
     try {
       await appendOperationLog(env.DB, {

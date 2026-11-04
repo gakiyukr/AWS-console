@@ -1,16 +1,20 @@
 'use client'
 
-// Lightsail 部署：以「帳號 → Region → Blueprint → Bundle → 登入憑證」表單
-// 建立 Lightsail 執行個體，部署流程以 SSE 即時回報進度，結果含連線資訊可複製／下載。
-import { useEffect, useState } from "react";
-import { Clipboard, Download, Loader2, RefreshCw, Zap, Trash2 } from "lucide-react";
+// Lightsail 機器總覽：D1 清單 × GetInstances 即時狀態。
+// Lightsail 沒有「更換公網 IP」（stop→start 不換 IP），該動作在表格中隱藏；
+// 新增機器可從既有執行個體挑選，或前往「新增 Lightsail」部署一台新機。
+import Link from "next/link";
+import { useState } from "react";
+import { Loader2, Plus, RefreshCw, Zap } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
-import { readJson, toastDanger } from "@/lib/api-client";
-import { regionLabel } from "@/lib/regions";
-import { readDeploymentStream } from "@/lib/deployment-stream";
-import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
+import { Input } from "@heroui/react/input";
+import { Modal } from "@heroui/react/modal";
+import { ConfirmDialog, MachineName } from "@/components/confirm-dialog";
+import { MachineTable } from "@/components/machine-table";
+import { readError, readJson, toastDanger } from "@/lib/api-client";
+import { useMachines } from "@/lib/use-machines";
 
 interface AwsAccountOption {
   id: number
@@ -19,506 +23,315 @@ interface AwsAccountOption {
   isDefault: boolean
 }
 
-interface BlueprintOption {
-  blueprintId: string
+interface LightsailInstanceOption {
+  instanceId: string
   name: string
-  description: string
-  platform: string
-  group: string
+  state: string
+  publicIpAddress: string
 }
 
-interface BundleOption {
-  bundleId: string
-  name: string
-  price: number
-  cpuCount: number
-  ramSizeInGb: number
-  diskSizeInGb: number
-  transferPerMonthInGb: number
-}
-
-interface ProgressEntry {
-  time: string
-  message: string
-  details?: Record<string, unknown>
-}
-
-const STAGE_LABELS: Record<string, string> = {
-  validating: "開始驗證部署輸入",
-  launching_instance: "正在建立 Lightsail 執行個體",
-  instance_launched: "執行個體已建立",
-  waiting_for_running: "等待執行個體進入 running",
-  instance_running: "執行個體已進入 running",
-  allocating_static_ip: "正在分配靜態 IP",
-  static_ip_attached: "靜態 IP 已附加",
-  static_ip_skipped: "跳過靜態 IP 分配",
-  firewall_configured: "防火牆規則已設定",
-  firewall_skipped: "跳過防火牆設定",
+const EMPTY_ADD_FORM = {
+  awsAccountId: null as number | null,
+  region: "",
+  instanceId: "",
+  name: "",
 };
 
-export default function LightsailPage() {
+export default function LightsailOverviewPage() {
+  const { machines, loading, refreshing, actionPendingId, busyPending, refresh, actions, dialogs } =
+    useMachines("lightsail");
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addForm, setAddForm] = useState(EMPTY_ADD_FORM);
+  const [adding, setAdding] = useState(false);
   const [accounts, setAccounts] = useState<AwsAccountOption[]>([]);
   const [regions, setRegions] = useState<string[]>([]);
-  const [blueprints, setBlueprints] = useState<BlueprintOption[]>([]);
-  const [bundles, setBundles] = useState<BundleOption[]>([]);
-  const [sshKeys, setSshKeys] = useState<SshPublicKeyOption[]>([]);
-  const [form, setForm] = useState({
-    accountId: null as number | null,
-    region: "",
-    blueprintId: "",
-    bundleId: "",
-    instanceName: "",
-    credentialType: "ssh_key" as "ssh_key" | "password",
-    sshKeyId: null as number | null,
-    rootPassword: "",
-  });
-  const [loadingKeys, setLoadingKeys] = useState(false);
-  const [loadingInitial, setLoadingInitial] = useState(true);
-  const [loadingBlueprints, setLoadingBlueprints] = useState(false);
-  const [loadingBundles, setLoadingBundles] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
-  const [progress, setProgress] = useState<ProgressEntry[]>([]);
+  const [instances, setInstances] = useState<LightsailInstanceOption[]>([]);
+  const [loadingRegions, setLoadingRegions] = useState(false);
+  const [loadingInstances, setLoadingInstances] = useState(false);
 
-  const resultText = result ? JSON.stringify(result, null, 2) : "";
+  const stats = {
+    running: machines.filter(machine => machine.state === "running").length,
+    stopped: machines.filter(machine => machine.state === "stopped").length,
+    regions: new Set(machines.map(machine => machine.region)).size,
+  };
 
-  function appendProgress(message: string, details?: Record<string, unknown>) {
-    setProgress(previous => [
-      ...previous,
-      {
-        time: new Date().toLocaleTimeString("zh-TW"),
-        message,
-        ...(details ? { details } : {}),
-      },
-    ]);
-  }
-
-  async function loadSshKeys() {
-    setLoadingKeys(true);
+  async function openAddDialog() {
+    setAddForm(EMPTY_ADD_FORM);
+    setRegions([]);
+    setInstances([]);
+    setAddOpen(true);
     try {
-      const response = await fetch("/api/ssh-keys");
-      if (!response.ok) throw new Error("載入 SSH 公鑰失敗");
-      const payload = await readJson<{ keys?: SshPublicKeyOption[] }>(response);
-      const keys: SshPublicKeyOption[] = payload.keys || [];
-      setSshKeys(keys);
-      setForm(previous => ({
-        ...previous,
-        sshKeyId: previous.sshKeyId && keys.some(key => key.id === previous.sshKeyId)
-          ? previous.sshKeyId
-          : keys[0]?.id ?? null,
-      }));
-    } catch {
-      toastDanger("載入 SSH 公鑰失敗");
-    } finally {
-      setLoadingKeys(false);
+      const response = await fetch("/api/accounts");
+      if (!response.ok) throw new Error(await readError(response));
+      const payload = await readJson<{ accounts?: AwsAccountOption[] }>(response);
+      const enabled = (payload.accounts || []).filter(account => account.enabled);
+      setAccounts(enabled);
+      const preferred = enabled.find(account => account.isDefault) || enabled[0];
+      if (preferred) {
+        setAddForm(previous => ({ ...previous, awsAccountId: preferred.id }));
+        await loadRegions(preferred.id);
+      }
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "載入帳號失敗");
     }
   }
 
-  async function loadRegions(accountId: number | null) {
-    setRegions([]);
-    setForm(previous => ({ ...previous, region: "", blueprintId: "", bundleId: "" }));
-    if (!accountId) return;
+  async function loadRegions(accountId: number) {
+    setLoadingRegions(true);
     try {
       const response = await fetch(`/api/lightsail/regions?account_id=${accountId}`);
-      if (!response.ok) throw new Error("載入 Lightsail Region 失敗");
+      if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<{ regions?: string[] }>(response);
       setRegions(payload.regions || []);
     } catch {
-      toastDanger("載入 Lightsail Region 失敗");
+      toastDanger("載入地區失敗");
+    } finally {
+      setLoadingRegions(false);
     }
   }
 
-  async function loadBlueprints(accountId: number | null, region: string) {
-    setBlueprints([]);
-    setForm(previous => ({ ...previous, blueprintId: "" }));
-    if (!accountId || !region) return;
-    setLoadingBlueprints(true);
+  async function loadInstances(accountId: number, region: string) {
+    if (!region) return;
+    setLoadingInstances(true);
     try {
       const response = await fetch(
-        `/api/lightsail/blueprints?account_id=${accountId}&region=${region}`,
+        `/api/lightsail/instances?account_id=${accountId}&region=${encodeURIComponent(region)}`,
       );
-      if (!response.ok) throw new Error("載入 Blueprint 失敗");
-      const payload = await readJson<{ blueprints?: BlueprintOption[] }>(response);
-      setBlueprints(payload.blueprints || []);
+      if (!response.ok) throw new Error(await readError(response));
+      setInstances(await readJson<LightsailInstanceOption[]>(response));
     } catch {
-      toastDanger("載入 Blueprint 失敗");
+      toastDanger("載入執行個體失敗");
     } finally {
-      setLoadingBlueprints(false);
+      setLoadingInstances(false);
     }
   }
 
-  async function loadBundles(accountId: number | null, region: string) {
-    setBundles([]);
-    setForm(previous => ({ ...previous, bundleId: "" }));
-    if (!accountId || !region) return;
-    setLoadingBundles(true);
+  async function submitAdd() {
+    setAdding(true);
     try {
-      const response = await fetch(
-        `/api/lightsail/bundles?account_id=${accountId}&region=${region}`,
-      );
-      if (!response.ok) throw new Error("載入 Bundle 失敗");
-      const payload = await readJson<{ bundles?: BundleOption[] }>(response);
-      setBundles(payload.bundles || []);
-    } catch {
-      toastDanger("載入 Bundle 失敗");
-    } finally {
-      setLoadingBundles(false);
-    }
-  }
-
-  async function loadInitialOptions() {
-    setLoadingInitial(true);
-    try {
-      const response = await fetch("/api/accounts");
-      if (!response.ok) throw new Error("載入 AWS 帳號失敗");
-      const payload = await readJson<{ accounts: AwsAccountOption[] }>(response);
-      const enabled = payload.accounts.filter(account => account.enabled);
-      const firstAccount = enabled.find(account => account.isDefault) || enabled[0];
-      setAccounts(enabled);
-      const activeAccount = form.accountId && enabled.some(account => account.id === form.accountId)
-        ? enabled.find(account => account.id === form.accountId) ?? null
-        : firstAccount;
-      setForm(previous => ({
-        ...previous,
-        accountId: activeAccount?.id ?? null,
-      }));
-      if (activeAccount) await loadRegions(activeAccount.id);
-    } catch {
-      toastDanger("載入初始選項失敗");
-    } finally {
-      setLoadingInitial(false);
-    }
-  }
-
-  useEffect(() => {
-    // 首次掛載載入帳號、Region 選項與公鑰；載入函式各自管理 loading 狀態與錯誤提示
-    async function init() {
-      await Promise.all([loadInitialOptions(), loadSshKeys()]);
-    }
-    void init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function handleDeploy() {
-    if (!form.accountId || !form.region || !form.blueprintId || !form.bundleId || !form.instanceName) {
-      toastDanger("請填寫所有必填欄位。");
-      return;
-    }
-
-    if (form.credentialType === "ssh_key" && !form.sshKeyId) {
-      toastDanger("請選擇 SSH 公鑰。");
-      return;
-    }
-
-    if (form.credentialType === "password" && form.rootPassword.length < 8) {
-      toastDanger("密碼長度至少 8 字元。");
-      return;
-    }
-
-    setBusy(true);
-    setResult(null);
-    setProgress([]);
-    appendProgress("開始 Lightsail 部署");
-
-    const body = {
-      account_id: form.accountId,
-      region: form.region,
-      blueprint_id: form.blueprintId,
-      bundle_id: form.bundleId,
-      instance_name: form.instanceName,
-      credential_type: form.credentialType,
-      ...(form.credentialType === "ssh_key"
-        ? { ssh_key_id: form.sshKeyId }
-        : { root_password: form.rootPassword }),
-    };
-
-    try {
-      const response = await fetch("/api/lightsail/deploy", {
+      const response = await fetch("/api/machines", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...addForm, platform: "lightsail", isWavelength: false }),
       });
-
-      const deployResult = await readDeploymentStream(response, {
-        onProgress: appendProgress,
-        stageLabels: STAGE_LABELS,
-      });
-
-      setResult(deployResult);
-      appendProgress("Lightsail 部署流程完成", deployResult);
-      toast.success("Lightsail 執行個體部署成功！");
+      if (!response.ok) throw new Error(await readError(response));
+      toast.success("機器已新增");
+      setAddOpen(false);
+      await refresh();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "部署失敗";
-      appendProgress(message);
-      toastDanger(message);
+      toastDanger(error instanceof Error ? error.message : "新增失敗");
     } finally {
-      setBusy(false);
+      setAdding(false);
     }
   }
 
-  async function copyResult() {
-    if (!resultText) return;
-    await navigator.clipboard.writeText(resultText);
-    toast.success("部署結果已複製");
-  }
-
-  function downloadResult() {
-    if (!resultText) return;
-    const blob = new Blob([resultText], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `lightsail-${form.instanceName}-${Date.now()}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function resetForm() {
-    setResult(null);
-    setProgress([]);
-    setForm(previous => ({ ...previous, instanceName: "" }));
-  }
-
-  function reloadOptions() {
-    void loadInitialOptions();
-    void loadSshKeys();
-  }
-
-  const selectClassName = "h-9 rounded-md border bg-background px-3 text-sm";
-
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center gap-3">
-        <Zap className="size-8 text-warning" />
-        <h1 className="text-2xl font-semibold">Lightsail 部署</h1>
+    <div className="flex w-full flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Lightsail</h2>
+          <p className="text-sm text-muted">管理 Lightsail 執行個體的電源狀態</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onPress={openAddDialog}>
+            <Plus aria-hidden size={16} />
+            加入既有機器
+          </Button>
+          <Link
+            href="/lightsail/new"
+            className="inline-flex h-8 items-center gap-2 rounded-md bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] transition-opacity hover:opacity-90"
+          >
+            <Zap aria-hidden size={16} />
+            新增 Lightsail
+          </Link>
+          <Button variant="secondary" size="sm" isDisabled={refreshing} onPress={refresh}>
+            {refreshing ? <Loader2 aria-hidden size={16} className="animate-spin" /> : <RefreshCw aria-hidden size={16} />}
+            重新整理
+          </Button>
+        </div>
       </div>
 
-      <Card className="p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-medium">部署設定</h2>
-          <Button
-            size="sm"
-            variant="secondary"
-            isDisabled={loadingInitial || busy}
-            onPress={reloadOptions}
-          >
-            {loadingInitial ? <Loader2 aria-hidden size={16} className="animate-spin" /> : <RefreshCw aria-hidden size={16} />}
-            重新載入
-          </Button>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium">AWS 帳號</label>
-            <select
-              className={selectClassName}
-              value={form.accountId ?? ""}
-              onChange={async (e) => {
-                const accountId = Number(e.target.value) || null;
-                setForm(previous => ({ ...previous, accountId, region: "", blueprintId: "", bundleId: "" }));
-                if (accountId) await loadRegions(accountId);
-              }}
-              disabled={loadingInitial || busy}
-            >
-              <option value="">請選擇帳號</option>
-              {accounts.map(account => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
-          </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {[
+          { label: "運行中", value: stats.running },
+          { label: "已停止", value: stats.stopped },
+          { label: "涵蓋地區", value: stats.regions },
+        ].map(stat => (
+          <Card key={stat.label}>
+            <Card.Content className="grid gap-1 p-6">
+              <p className="text-sm text-muted">{stat.label}</p>
+              <p className="text-3xl font-semibold tabular-nums">{stat.value}</p>
+            </Card.Content>
+          </Card>
+        ))}
+      </div>
 
-          <div>
-            <label className="mb-1.5 block text-sm font-medium">Region</label>
-            <select
-              className={selectClassName}
-              value={form.region}
-              onChange={async (e) => {
-                const region = e.target.value;
-                setForm(previous => ({ ...previous, region, blueprintId: "", bundleId: "" }));
-                if (region && form.accountId) {
-                  await Promise.all([
-                    loadBlueprints(form.accountId, region),
-                    loadBundles(form.accountId, region),
-                  ]);
-                }
-              }}
-              disabled={!form.accountId || busy}
-            >
-              <option value="">請選擇 Region</option>
-              {regions.map(region => (
-                <option key={region} value={region}>
-                  {regionLabel(region)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1.5 block text-sm font-medium">作業系統映像（Blueprint）</label>
-            <select
-              className={selectClassName}
-              value={form.blueprintId}
-              onChange={(e) => setForm(previous => ({ ...previous, blueprintId: e.target.value }))}
-              disabled={!form.region || loadingBlueprints || busy}
-            >
-              <option value="">請選擇 Blueprint</option>
-              {blueprints.map(bp => (
-                <option key={bp.blueprintId} value={bp.blueprintId}>
-                  {bp.name} ({bp.platform})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1.5 block text-sm font-medium">規格方案（Bundle）</label>
-            <select
-              className={selectClassName}
-              value={form.bundleId}
-              onChange={(e) => setForm(previous => ({ ...previous, bundleId: e.target.value }))}
-              disabled={!form.region || loadingBundles || busy}
-            >
-              <option value="">請選擇 Bundle</option>
-              {bundles.map(bundle => (
-                <option key={bundle.bundleId} value={bundle.bundleId}>
-                  {bundle.name} - ${bundle.price}/月 ({bundle.cpuCount} vCPU, {bundle.ramSizeInGb} GB RAM)
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="sm:col-span-2">
-            <label className="mb-1.5 block text-sm font-medium">執行個體名稱</label>
-            <input
-              type="text"
-              className={selectClassName}
-              placeholder="my-lightsail-instance"
-              value={form.instanceName}
-              onChange={(e) => setForm(previous => ({ ...previous, instanceName: e.target.value }))}
-              disabled={busy}
-            />
-          </div>
-
-          <div className="sm:col-span-2">
-            <label className="mb-1.5 block text-sm font-medium">登入憑證類型</label>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  checked={form.credentialType === "ssh_key"}
-                  onChange={() => setForm(previous => ({ ...previous, credentialType: "ssh_key" }))}
-                  disabled={busy}
-                />
-                <span>SSH 公鑰</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  checked={form.credentialType === "password"}
-                  onChange={() => setForm(previous => ({ ...previous, credentialType: "password" }))}
-                  disabled={busy}
-                />
-                <span>密碼</span>
-              </label>
-            </div>
-          </div>
-
-          {form.credentialType === "ssh_key" && (
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-sm font-medium">SSH 公鑰</label>
-              <select
-                className={selectClassName}
-                value={form.sshKeyId ?? ""}
-                onChange={(e) => setForm(previous => ({ ...previous, sshKeyId: Number(e.target.value) || null }))}
-                disabled={loadingKeys || busy}
-              >
-                <option value="">請選擇公鑰</option>
-                {sshKeys.map(key => (
-                  <option key={key.id} value={key.id}>
-                    {key.label} ({sshKeyTypeLabel(key.publicKey)})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {form.credentialType === "password" && (
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-sm font-medium">Root 密碼</label>
-              <input
-                type="password"
-                className={selectClassName}
-                placeholder="至少 8 字元"
-                value={form.rootPassword}
-                onChange={(e) => setForm(previous => ({ ...previous, rootPassword: e.target.value }))}
-                disabled={busy}
-              />
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 flex gap-3">
-          <Button
-            variant="primary"
-            onPress={handleDeploy}
-            isDisabled={busy || !form.accountId || !form.region || !form.blueprintId || !form.bundleId || !form.instanceName}
-          >
-            {busy ? (
-              <>
-                <Loader2 aria-hidden size={16} className="animate-spin" />
-                部署中...
-              </>
-            ) : (
-              <>
-                <Zap aria-hidden size={16} />
-                開始部署
-              </>
-            )}
-          </Button>
-          {result && (
-            <Button variant="ghost" onPress={resetForm}>
-              <Trash2 className="size-4" />
-              清除結果
-            </Button>
-          )}
-        </div>
+      <Card>
+        <Card.Content className="p-6">
+          <MachineTable
+            machines={machines}
+            loading={loading}
+            refreshing={refreshing}
+            actionPendingId={actionPendingId}
+            busyPending={busyPending}
+            platform="lightsail"
+            emptyText="清單中還沒有 Lightsail 機器。"
+            onRefresh={refresh}
+            actions={actions}
+          />
+        </Card.Content>
       </Card>
 
-      {progress.length > 0 && (
-        <Card className="p-6">
-          <h2 className="mb-4 text-lg font-medium">部署進度</h2>
-          <div className="space-y-2 rounded-lg bg-surface p-4 font-mono text-sm">
-            {progress.map((entry, index) => (
-              <div key={index} className="flex gap-2">
-                <span className="text-muted">[{entry.time}]</span>
-                <span>{entry.message}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+      {/* 加入既有機器 */}
+      <Modal.Root isOpen={addOpen} onOpenChange={setAddOpen}>
+        <Modal.Backdrop>
+          <Modal.Container size="md">
+            <Modal.Dialog>
+              <Modal.Header>
+                <Modal.Heading>加入既有 Lightsail 機器</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body className="grid gap-4">
+                <div className="grid gap-2">
+                  <label htmlFor="ls-add-account" className="text-sm font-medium">AWS 帳號</label>
+                  <select
+                    id="ls-add-account"
+                    className="h-9 rounded-md border bg-background px-3 text-sm"
+                    value={addForm.awsAccountId ?? ""}
+                    onChange={event => {
+                      const accountId = Number(event.target.value);
+                      setAddForm({ ...EMPTY_ADD_FORM, awsAccountId: accountId });
+                      setInstances([]);
+                      void loadRegions(accountId);
+                    }}
+                  >
+                    {accounts.map(account => (
+                      <option key={account.id} value={account.id}>{account.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="ls-add-region" className="text-sm font-medium">地區</label>
+                  <select
+                    id="ls-add-region"
+                    className="h-9 rounded-md border bg-background px-3 text-sm"
+                    value={addForm.region}
+                    disabled={loadingRegions}
+                    onChange={event => {
+                      const region = event.target.value;
+                      setAddForm(previous => ({ ...previous, region, instanceId: "" }));
+                      if (addForm.awsAccountId) void loadInstances(addForm.awsAccountId, region);
+                    }}
+                  >
+                    <option value="">請選擇地區</option>
+                    {regions.map(region => (
+                      <option key={region} value={region}>{region}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="ls-add-instance" className="text-sm font-medium">執行個體</label>
+                  <select
+                    id="ls-add-instance"
+                    className="h-9 rounded-md border bg-background px-3 text-sm"
+                    value={addForm.instanceId}
+                    disabled={loadingInstances || instances.length === 0}
+                    onChange={event => {
+                      const selected = instances.find(item => item.instanceId === event.target.value);
+                      setAddForm(previous => ({
+                        ...previous,
+                        instanceId: event.target.value,
+                        name: selected?.name || event.target.value,
+                      }));
+                    }}
+                  >
+                    <option value="">{loadingInstances ? "載入中…" : "請選擇執行個體"}</option>
+                    {instances.map(instance => (
+                      <option key={instance.instanceId} value={instance.instanceId}>
+                        {instance.name}（{instance.state}）
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="ls-add-name" className="text-sm font-medium">顯示名稱</label>
+                  <Input
+                    id="ls-add-name"
+                    value={addForm.name}
+                    onChange={event => setAddForm(previous => ({ ...previous, name: event.target.value }))}
+                  />
+                </div>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="secondary" onPress={() => setAddOpen(false)}>取消</Button>
+                <Button
+                  isDisabled={adding || !addForm.awsAccountId || !addForm.region || !addForm.instanceId || !addForm.name}
+                  onPress={submitAdd}
+                >
+                  {adding ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
+                  加入
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
 
-      {result && (
-        <Card className="p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-medium">部署結果</h2>
-            <div className="flex gap-2">
-              <Button size="sm" variant="ghost" onPress={copyResult}>
-                <Clipboard className="size-4" />
-                複製
-              </Button>
-              <Button size="sm" variant="ghost" onPress={downloadResult}>
-                <Download className="size-4" />
-                下載
-              </Button>
-            </div>
-          </div>
-          <pre className="overflow-x-auto rounded-lg bg-surface p-4 text-sm">
-            {resultText}
-          </pre>
-        </Card>
-      )}
+      {/* 確認對話框（無「更換 IP」：Lightsail 不支援） */}
+      <ConfirmDialog
+        open={dialogs.stop.open}
+        onOpenChange={dialogs.stop.setOpen}
+        title="確認關閉機器"
+        confirmLabel="關閉"
+        onConfirm={dialogs.stop.confirm}
+      >
+        確定要關閉 <MachineName machine={dialogs.stop.target} /> 嗎？關機後 SSH 連線會中斷。
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialogs.reboot.open}
+        onOpenChange={dialogs.reboot.setOpen}
+        title="確認重啟機器"
+        confirmLabel="重啟"
+        onConfirm={dialogs.reboot.confirm}
+      >
+        確定要重啟 <MachineName machine={dialogs.reboot.target} /> 嗎？
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialogs.terminate.open}
+        onOpenChange={dialogs.terminate.setOpen}
+        title="確認刪除執行個體"
+        confirmLabel="刪除"
+        danger
+        onConfirm={dialogs.terminate.confirm}
+      >
+        確定要刪除 <MachineName machine={dialogs.terminate.target} /> 嗎？Lightsail 執行個體將被永久刪除，此操作無法復原。
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialogs.ipv6.open}
+        onOpenChange={dialogs.ipv6.setOpen}
+        title="確認開通 IPv6"
+        confirmLabel="開通 IPv6"
+        pending={dialogs.ipv6.pending}
+        onConfirm={dialogs.ipv6.confirm}
+      >
+        確定要為 <MachineName machine={dialogs.ipv6.target} /> 開通 IPv6 嗎？
+        Lightsail 會自動指派 IPv6 位址並開放 IPv6 防火牆，不需要重新開機。
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialogs.remove.open}
+        onOpenChange={dialogs.remove.setOpen}
+        title="移除機器"
+        confirmLabel="移除"
+        danger
+        pending={dialogs.remove.pending}
+        onConfirm={dialogs.remove.confirm}
+      >
+        確定要將 <MachineName machine={dialogs.remove.target} /> 從清單移除嗎？只會移除清單記錄，AWS 上的執行個體不受影響。
+      </ConfirmDialog>
     </div>
   );
 }

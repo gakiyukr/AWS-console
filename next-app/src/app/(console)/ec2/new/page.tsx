@@ -9,6 +9,7 @@ import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
+import { DeployModeTabs } from "./deploy-tabs";
 import { readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
@@ -281,13 +282,15 @@ export default function Ec2Page() {
             ← 返回 EC2
           </Link>
           <h2 className="text-2xl font-bold tracking-tight">新增 EC2</h2>
-          <p className="text-sm text-muted">在一般 AWS Region 建立可從公網連線的 EC2 執行個體</p>
+          <p className="text-sm text-muted">在一般 Region 或 Wavelength Zone 建立執行個體</p>
         </div>
         <Button variant="secondary" size="sm" isDisabled={loadingInitial || busy} onPress={reloadOptions}>
           {loadingInitial ? <Loader2 aria-hidden size={16} className="animate-spin" /> : <RefreshCw aria-hidden size={16} />}
           重新載入選項
         </Button>
       </div>
+
+      <DeployModeTabs current="regional" />
 
       <Card>
         <Card.Content className="grid gap-4 p-6">

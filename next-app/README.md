@@ -31,9 +31,10 @@
 next-app/
 ├── src/app/(console)/   # 受保護頁面（layout 內做頁面守衛，一律動態渲染）
 │   ├── page.tsx         # 入口：轉址到 /ec2
-│   ├── ec2/             # EC2 機器總覽（電源／IPv6／換 IP）；new/ 為新增機器表單
-│   ├── lightsail/       # Lightsail 機器總覽（電源／IPv6）；new/ 為新增機器表單
-│   ├── wavelength/      # Wavelength Zone 初始化與部署（未列入導覽，URL 直達）
+│   ├── ec2/             # EC2 機器總覽（含 WL 機器，帶 WL 標籤）；
+│   │                    #   new/ 為新增機器，內含切換分頁：一般 EC2 ↔ Wavelength EC2
+│   ├── lightsail/       # Lightsail 機器總覽；new/ 為新增機器表單
+│   ├── wavelength/      # 舊網址轉址到 /ec2/new/wavelength
 │   ├── accounts/        # AWS 帳號管理
 │   ├── logs/            # 稽核日誌
 │   ├── share/           # 分享連結管理（對外一鍵換 IP）

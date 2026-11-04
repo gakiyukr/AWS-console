@@ -262,7 +262,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
 
       {captchaEnabled ? (
         <Card className="mb-6">
-          <Card.Content className="grid gap-3 p-6">
+          <Card.Content className="grid grid-cols-1 gap-3 p-6">
             <h3 className="text-sm font-semibold">人機驗證</h3>
             <p className="text-xs text-muted">更換 IP 前需完成驗證；每次更換都需重新驗證一次。</p>
             <div ref={widgetHostRef} className="flex justify-center" />
@@ -287,10 +287,12 @@ export default function ShareView({ token, linkName }: { token: string; linkName
             const busy = pendingMachineId !== null;
             const captchaPending = captchaEnabled && !captchaToken;
             return (
-              <Card key={machine.id}>
-                <Card.Content className="grid gap-3 p-6">
+              <Card key={machine.id} className="min-w-0">
+                <Card.Content className="grid grid-cols-1 gap-3 p-6">
                   <div className="flex items-start justify-between gap-2">
-                    <h2 className="min-w-0 truncate text-base font-semibold">{machine.name}</h2>
+                    <h2 className="min-w-0 truncate text-base font-semibold" title={machine.name}>
+                      {machine.name}
+                    </h2>
                     <Chip variant={stateBadgeVariant(machine.state)} size="sm">
                       {stateLabel(machine.state)}
                     </Chip>
@@ -350,7 +352,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
 
       {pendingMachineId !== null || progress.length > 0 ? (
         <Card className="mt-6">
-          <Card.Content className="grid gap-3 p-6">
+          <Card.Content className="grid grid-cols-1 gap-3 p-6">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">執行進度</h3>
               <Button variant="ghost" size="sm" aria-label="重新整理狀態" isDisabled={pendingMachineId !== null} onPress={refresh}>

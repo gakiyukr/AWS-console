@@ -77,6 +77,7 @@ function parseDescribeInstancesXmlItems(xml) {
       state: findTagValue(segment, "name"),
       publicDnsName,
       publicIpAddress: awsPublicIpAddress || derivedPublicIpAddress,
+      ipv6Address: findTagValue(segment, "ipv6Address"),
       isWlInstance,
       awsNameTag: extractAwsNameTag(segment),
     };
@@ -160,6 +161,7 @@ export async function mergeMachineStates(env, machines) {
         state: STATE_QUERY_FAILED,
         publicDnsName: STATE_QUERY_FAILED,
         publicIpAddress: STATE_QUERY_FAILED,
+        ipv6Address: STATE_QUERY_FAILED,
       };
     }
     const live = liveByKey.get(`${machine.region}\u0000${machine.instanceId}`);
@@ -169,6 +171,7 @@ export async function mergeMachineStates(env, machines) {
         state: STATE_NOT_FOUND,
         publicDnsName: STATE_NOT_FOUND,
         publicIpAddress: STATE_NOT_FOUND,
+        ipv6Address: STATE_NOT_FOUND,
       };
     }
     return {
@@ -177,6 +180,7 @@ export async function mergeMachineStates(env, machines) {
       state: live.state,
       publicDnsName: live.publicDnsName,
       publicIpAddress: live.publicIpAddress,
+      ipv6Address: live.ipv6Address,
       isWavelength: Boolean(machine.isWavelength || live.isWlInstance),
     };
   });

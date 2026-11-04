@@ -26,6 +26,7 @@ interface MachineRow {
   state: string | null
   publicIpAddress: string | null
   publicDnsName: string | null
+  ipv6Address: string | null
   awsAccountId: number | null
   awsAccountName: string | null
 }
@@ -271,6 +272,9 @@ export default function MachinesPage() {
   const [removing, setRemoving] = useState(false);
   const [terminateTarget, setTerminateTarget] = useState<MachineRow | null>(null);
   const [terminateOpen, setTerminateOpen] = useState(false);
+  const [ipv6Target, setIpv6Target] = useState<MachineRow | null>(null);
+  const [ipv6Open, setIpv6Open] = useState(false);
+  const [ipv6Pending, setIpv6Pending] = useState(false);
 
   function requestPowerAction(machine: MachineRow, action: "start" | "stop") {
     if (action === "stop") {
@@ -336,6 +340,35 @@ export default function MachinesPage() {
       setActionPendingId(null);
     }
   }
+  function requestIpv6(machine: MachineRow) {
+    setIpv6Target(machine);
+    setIpv6Open(true);
+  }
+
+  async function confirmIpv6() {
+    const machine = ipv6Target;
+    if (!machine || actionPendingId !== null || ipv6Pending) return;
+    setIpv6Open(false);
+    setIpv6Target(null);
+    setIpv6Pending(true);
+    setActionPendingId(machine.id);
+    try {
+      const response = await fetch(`/api/machines/${machine.id}/ipv6`, { method: "POST" });
+      if (!response.ok) throw new Error(await readError(response));
+      const payload = await readJson<{ message?: string; warnings?: string[] }>(response);
+      toast.success(payload.message || "IPv6 已開通");
+      for (const warning of payload.warnings || []) {
+        toastDanger(warning);
+      }
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "開通 IPv6 失敗");
+    } finally {
+      await loadMachines();
+      setIpv6Pending(false);
+      setActionPendingId(null);
+    }
+  }
+
   async function submitRemove() {
     const target = removeTarget;
     if (!target || removing) return;
@@ -416,6 +449,7 @@ export default function MachinesPage() {
                     <Table.Column>AWS 帳號</Table.Column>
                     <Table.Column>狀態</Table.Column>
                     <Table.Column>公網 IP</Table.Column>
+                    <Table.Column>IPv6</Table.Column>
                     <Table.Column>DNS</Table.Column>
                     <Table.Column>操作</Table.Column>
                   </Table.Header>
@@ -451,6 +485,20 @@ export default function MachinesPage() {
                               onClick={() => copyText(machine.publicIpAddress!)}
                             >
                               {machine.publicIpAddress}
+                            </button>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </Table.Cell>
+                        <Table.Cell>
+                          {machine.ipv6Address ? (
+                            <button
+                              type="button"
+                              title="點擊複製"
+                              className="block max-w-40 truncate font-mono text-xs underline-offset-4 hover:underline"
+                              onClick={() => copyText(machine.ipv6Address!)}
+                            >
+                              {machine.ipv6Address}
                             </button>
                           ) : (
                             <span className="text-muted">—</span>
@@ -502,11 +550,21 @@ export default function MachinesPage() {
                                 <Button
                                   variant="secondary"
                                   size="sm"
-                                  isDisabled={actionPendingId !== null || rebootIpPending}
+                                  isDisabled={actionPendingId !== null || rebootIpPending || ipv6Pending}
                                   onPress={() => requestRebootIp(machine)}
                                 >
                                   更換 IP
                                 </Button>
+                                {!machine.isWavelength ? (
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    isDisabled={actionPendingId !== null || ipv6Pending}
+                                    onPress={() => requestIpv6(machine)}
+                                  >
+                                    IPv6
+                                  </Button>
+                                ) : null}
                                 <Button
                                   variant="secondary"
                                   size="sm"
@@ -730,6 +788,29 @@ export default function MachinesPage() {
             <Modal.Footer>
               <Button variant="secondary" onPress={() => setRebootIpOpen(false)}>取消</Button>
               <Button isDisabled={rebootIpPending} onPress={confirmRebootIp}>更換 IP</Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
+
+      {/* 確認開通 IPv6 */}
+      <Modal.Root isOpen={ipv6Open} onOpenChange={setIpv6Open}>
+        <Modal.Backdrop>
+        <Modal.Container size="sm" placement="center">
+          <Modal.Dialog>
+            <Modal.Header>
+              <Modal.Heading>確認開通 IPv6</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body>
+              確定要為「{ipv6Target?.name}」開通 IPv6 嗎？此操作將：<br />
+              • 為 VPC／子網關聯 IPv6 CIDR（若尚未具備）<br />
+              • 加入 Internet Gateway 的 <code>::/0</code> 路由與安全群組規則<br />
+              • 指派 IPv6 位址並<strong>重新開機一次</strong>（約 1 分鐘，不會更換 IPv4 公網 IP）
+            </Modal.Body>
+            <Modal.Footer>
+              <Button variant="secondary" onPress={() => setIpv6Open(false)}>取消</Button>
+              <Button isDisabled={ipv6Pending} onPress={confirmIpv6}>開通 IPv6</Button>
             </Modal.Footer>
           </Modal.Dialog>
         </Modal.Container>

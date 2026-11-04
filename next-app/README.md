@@ -13,6 +13,9 @@
   訪客點擊「一鍵換 IP」前須先通過驗證，兌換憑證為一次性。
 - 建立及初始化 AWS Wavelength Zone 所需的子網、Carrier Gateway、路由表與安全群組。
 - 以獨立工作流部署一般區域 EC2、Wavelength 執行個體、Lightsail 執行個體與 SSH forwarder。
+- 部署一般 EC2 時可選用 IPv6（完整開通 VPC/子網 CIDR、IGW 路由與安全群組規則）；
+  機器總覽可對既有 EC2／Lightsail 機器一鍵開通 IPv6（EC2 指派後自動重開機一次）。
+  Wavelength Zone 不支援 IPv6（AWS 限制）。
 - 部署成功後自動將建立的執行個體登錄至電源管理清單。
 - 保存電源操作與部署結果的稽核日誌。
 - 在 D1 管理多組 AWS 帳號；AWS Secret 以 AES-256-GCM 加密後儲存。
@@ -185,6 +188,35 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
 Wavelength 初始化與部署流程另需 VPC、Subnet、Carrier Gateway、Route Table、
 Security Group 與 `ec2:RunInstances` 等權限；一般 EC2 部署亦需 `ec2:RunInstances`。
 
+啟用 IPv6（部署時勾選或一鍵開通）另需：
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AssociateVpcCidrBlock",
+        "ec2:AssociateSubnetCidrBlock",
+        "ec2:AssignIpv6Addresses",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeInternetGateways",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:CreateRoute",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RebootInstances"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Lightsail 的一鍵開通另需 `lightsail:SetIpAddressType` 與 `lightsail:GetInstance`。
+
 帳號管理的「開通區域」功能需額外授予下列權限（EC2 EnableRegion 屬帳號層級
 操作，AWS 要求同時具備 EC2 與 Account 兩個命名空間的權限）：
 
@@ -218,6 +250,11 @@ Security Group 與 `ec2:RunInstances` 等權限；一般 EC2 部署亦需 `ec2:R
   執行個體被永久刪除並同步移除清單記錄。
 - `/api/machines/:id/reboot-ip`：連續執行 stop → 等待 stopped → start，
   藉此更換公網 IP。
+- `/api/machines/:id/ipv6`：為既有機器開通 IPv6（完整開通）。EC2 依序確保
+  VPC `/56`、子網 `/64`、Internet Gateway 的 `::/0` 路由與安全群組 `::/0` 規則，
+  再指派位址並重開機一次（約 1 分鐘，不更換 IPv4 公網 IP）；Lightsail 走
+  `SetIpAddressType dualstack`。Wavelength 機器直接回 400。所有步驟先 Describe
+  再寫入，重複執行安全。
 - `/api/accounts`：AWS 帳號與加密憑證管理；`/:id/test` 可驗證憑證，`/:id/regions/enable` 可開通區域。
 - `/api/ssh-keys`：部署用 SSH 公鑰庫的列表、新增（上限 50 把）與刪除。
 - `/api/ec2/*`：一般 EC2 的 Region、VPC、執行個體、作業系統選項與部署流程。

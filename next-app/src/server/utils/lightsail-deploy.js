@@ -143,6 +143,8 @@ export async function deployLightsailInstance(awsEnv, body, onProgress) {
       blueprintId: blueprint_id,
       bundleId: bundle_id,
       userData: encodedUserData,
+      // 雙棧（IPv4 + IPv6）；Lightsail 預設即 dualstack，此處顯式指定以免預設值變動
+      ipAddressType: "dualstack",
       tags: [
         { key: "ManagedBy", value: "aws-console-lightsail" },
         { key: "DeployedAt", value: new Date().toISOString() },
@@ -214,6 +216,7 @@ export async function deployLightsailInstance(awsEnv, body, onProgress) {
   }
 
   // 回傳部署結果
+  const ipv6Addresses = Array.isArray(instance.ipv6Addresses) ? instance.ipv6Addresses : [];
   return {
     success: true,
     instance_id: instance.name, // Lightsail 使用 name 作為識別
@@ -222,6 +225,8 @@ export async function deployLightsailInstance(awsEnv, body, onProgress) {
     blueprint_id,
     bundle_id,
     public_ip_address: instance.publicIpAddress,
+    ipv6_address: ipv6Addresses[0] || "",
+    ip_address_type: instance.ipAddressType || "dualstack",
     static_ip_name: staticIp,
     username: "root",
     credential_type: credential.type,

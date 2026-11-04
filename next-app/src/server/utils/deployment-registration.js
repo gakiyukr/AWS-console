@@ -17,6 +17,7 @@ function addCandidate(candidates, instanceId, isWavelength) {
  * forwarder 流程同時保留目標 Wavelength 執行個體與新建立的區域型 forwarder。
  */
 function collectDeploymentMachines(deploymentType, result) {
+  const candidates = [];
 
   switch (deploymentType) {
     case "wavelength":

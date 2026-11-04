@@ -36,6 +36,7 @@ export async function GET(request: Request): Promise<Response> {
           state: "查詢失敗",
           publicDnsName: "查詢失敗",
           publicIpAddress: "查詢失敗",
+          ipv6Address: "查詢失敗",
         });
       }
     }

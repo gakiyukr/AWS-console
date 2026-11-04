@@ -65,6 +65,146 @@ export function parseSubnetItems(xml) {
   }));
 }
 
+// ─── IPv6 ────────────────────────────────────────────────────────────────
+
+/** 讀取一組 ipv6CidrBlockAssociationSet，回傳已 associated 的 CIDR 清單。 */
+function readAssociatedIpv6Cidrs(parent) {
+  return childrenNamed(firstChildNamed(parent, "ipv6CidrBlockAssociationSet"), "item")
+    .filter(item => firstText(item, ["ipv6CidrBlockState", "state"]) === "associated")
+    .map(item => firstText(item, "ipv6CidrBlock"))
+    .filter(Boolean);
+}
+
+/** 單一 VPC（DescribeVpcs 帶 VpcId）的 IPv6 CIDR 與關聯狀態。 */
+export function parseVpcIpv6Info(xml) {
+  const root = parseXml(xml);
+  const response = firstChildNamed(root, "DescribeVpcsResponse");
+  const vpcSet = firstChildNamed(response, "vpcSet");
+  const item = firstChildNamed(vpcSet, "item");
+  if (!item) {
+    return { vpcId: "", ipv6CidrBlock: "", associationState: "" };
+  }
+  const associations = childrenNamed(firstChildNamed(item, "ipv6CidrBlockAssociationSet"), "item");
+  // 優先取 associated 的 Amazon 提供 /56；否則回報第一個關聯的狀態供輪詢判定
+  const associated = associations.find(
+    assoc => firstText(assoc, ["ipv6CidrBlockState", "state"]) === "associated",
+  );
+  const pending = associations[0];
+  return {
+    vpcId: firstText(item, "vpcId"),
+    ipv6CidrBlock: associated ? firstText(associated, "ipv6CidrBlock") : "",
+    associationState: pending ? firstText(pending, ["ipv6CidrBlockState", "state"]) : "",
+  };
+}
+
+/** 各子網已關聯的 IPv6 /64 清單（子網缺少關聯時不含該子網）。 */
+export function parseSubnetsIpv6Usage(xml) {
+  const root = parseXml(xml);
+  const response = firstChildNamed(root, "DescribeSubnetsResponse");
+  const subnetSet = firstChildNamed(response, "subnetSet");
+  return childrenNamed(subnetSet, "item").map(item => ({
+    subnetId: firstText(item, "subnetId"),
+    ipv6CidrBlocks: readAssociatedIpv6Cidrs(item),
+  }));
+}
+
+/** 子網的 IPv6 關聯狀態（輪詢用）：associated / associating / 空字串。 */
+export function parseSubnetIpv6State(xml) {
+  const root = parseXml(xml);
+  const response = firstChildNamed(root, "DescribeSubnetsResponse");
+  const subnetSet = firstChildNamed(response, "subnetSet");
+  const item = firstChildNamed(subnetSet, "item");
+  // ipv6CidrBlockAssociationSet 內還有一層 item
+  const association = firstChildNamed(
+    firstChildNamed(item, "ipv6CidrBlockAssociationSet"),
+    "item",
+  );
+  return {
+    subnetId: firstText(item, "subnetId"),
+    ipv6CidrBlock: firstText(association, "ipv6CidrBlock"),
+    state: firstText(association, ["ipv6CidrBlockState", "state"]),
+  };
+}
+
+/**
+ * 執行個體的主要網路介面資訊：ENI id、掛載的安全群組與既有 IPv6 位址。
+ * 取 deviceIndex 0（或第一個）介面；AssignIpv6Addresses 需要 ENI id，
+ * 而既有位址用來避免重複指派（Ipv6AddressCount 是加法式、不冪等）。
+ */
+export function parseInstanceNicInfo(xml) {
+  const root = parseXml(xml);
+  const response = firstChildNamed(root, "DescribeInstancesResponse");
+  const reservationSet = firstChildNamed(response, "reservationSet");
+  const reservation = firstChildNamed(reservationSet, "item");
+  const instancesSet = firstChildNamed(reservation, "instancesSet");
+  const item = firstChildNamed(instancesSet, "item");
+  const interfaces = childrenNamed(firstChildNamed(item, "networkInterfaceSet"), "item");
+  if (interfaces.length === 0) {
+    return {
+      instanceId: firstText(item, "instanceId"),
+      state: firstText(item, ["instanceState", "name"]),
+      subnetId: "",
+      vpcId: "",
+      networkInterfaceId: "",
+      securityGroupIds: [],
+      ipv6Addresses: [],
+    };
+  }
+  // 主要介面即 deviceIndex 0；找不到時退回第一個
+  const primary = interfaces.find(
+    nic => firstText(nic, ["attachment", "deviceIndex"]) === "0",
+  ) || interfaces[0];
+  return {
+    instanceId: firstText(item, "instanceId"),
+    state: firstText(item, ["instanceState", "name"]),
+    subnetId: firstText(primary, "subnetId"),
+    vpcId: firstText(primary, "vpcId"),
+    networkInterfaceId: firstText(primary, "networkInterfaceId"),
+    securityGroupIds: childrenNamed(firstChildNamed(primary, "groupSet"), "item")
+      .map(group => firstText(group, "groupId"))
+      .filter(Boolean),
+    ipv6Addresses: allTexts(primary, ["ipv6AddressesSet", "item", "ipv6Address"]).filter(Boolean),
+  };
+}
+
+/** DescribeInternetGateways 中已附加到 VPC 的閘道 id（無則空字串）。 */
+export function parseInternetGatewayId(xml) {
+  const root = parseXml(xml);
+  const response = firstChildNamed(root, "DescribeInternetGatewaysResponse");
+  const gatewaySet = firstChildNamed(response, "internetGatewaySet");
+  const item = firstChildNamed(gatewaySet, "item");
+  return item ? firstText(item, "internetGatewayId") : "";
+}
+
+/** 路由表的指定目的地路由（找不到回 null）。 */
+export function parseRouteByDestination(xml, destinationField, destination) {
+  const root = parseXml(xml);
+  const response = firstChildNamed(root, "DescribeRouteTablesResponse");
+  const routeTableSet = firstChildNamed(response, "routeTableSet");
+  for (const routeTable of childrenNamed(routeTableSet, "item")) {
+    for (const route of childrenNamed(firstChildNamed(routeTable, "routeSet"), "item")) {
+      if (firstText(route, destinationField) === destination) {
+        return {
+          routeTableId: firstText(routeTable, "routeTableId"),
+          gatewayId: firstText(route, "gatewayId"),
+          state: firstText(route, "state"),
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/** DescribeRouteTables 中與子網關聯（或為 VPC 主路由表）的路由表 id。 */
+export function parseRouteTableIdForSubnet(xml) {
+  const root = parseXml(xml);
+  const response = firstChildNamed(root, "DescribeRouteTablesResponse");
+  const routeTableSet = firstChildNamed(response, "routeTableSet");
+  const item = firstChildNamed(routeTableSet, "item");
+  return item ? firstText(item, "routeTableId") : "";
+}
+
+
 export function parseSecurityGroupItems(xml) {
   const root = parseXml(xml);
   const response = firstChildNamed(root, "DescribeSecurityGroupsResponse");

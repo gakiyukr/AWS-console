@@ -12,6 +12,12 @@
 // HTTP 錯誤映射在 http.js。
 import { AwsRequestError, ec2Query, encodeUserData } from "./aws-query.js";
 import {
+  ensureEniIpv6SgRules,
+  ensureIpv6RouteToIgw,
+  ensureSubnetIpv6Cidr,
+  ensureVpcIpv6Cidr,
+} from "./ipv6.js";
+import {
   compareInstanceTypesBySize,
   parseAvailabilityZonesXml,
   parseCarrierGatewayItems,
@@ -23,6 +29,7 @@ import {
   parseImageItems,
   parseInstanceDescription,
   parseInstanceDescriptions,
+  parseInstanceNicInfo,
   parseInstanceStatus,
   parseInstanceTypeOfferings,
   parseInstanceTypes,
@@ -206,6 +213,27 @@ function formatResourceName(kind, zone) {
 
 function isForwarderEnabled(input) {
   return input?.enable_forwarder === true || input?.enable_forwarder === "true";
+}
+
+// 選用旗標：沿用 enable_forwarder 的寬鬆解析（JSON 布林或字串），
+// 不放入路由的 fields 白名單（該白名單只接受字串正則）。
+function isIpv6Enabled(input) {
+  return input?.ipv6 === true || input?.ipv6 === "true";
+}
+
+/**
+ * 讀取執行個體主要網路介面的第一個 IPv6 位址；未開通或查詢失敗回空字串。
+ * 查詢失敗不應讓已完成的部署變成失敗，因此吞掉錯誤。
+ */
+async function readInstanceIpv6Address(env, region, instanceId) {
+  try {
+    const nic = parseInstanceNicInfo(
+      await ec2Query(region, env, "DescribeInstances", { "InstanceId.1": instanceId }),
+    );
+    return nic.ipv6Addresses[0] || "";
+  } catch {
+    return "";
+  }
 }
 
 function generateForwarderListenPort() {
@@ -1237,12 +1265,14 @@ function buildRegionalInstanceResult({
   publicDnsName = "",
   privateIpAddress = "",
   privateDnsName = "",
+  ipv6Address = "",
   subnetId,
   securityGroupId,
   credential,
   ready,
   waitError = "",
   instanceType = "",
+  warnings = [],
 }) {
   return {
     ready,
@@ -1253,12 +1283,14 @@ function buildRegionalInstanceResult({
     public_dns_name: publicDnsName,
     private_ip: privateIpAddress,
     private_dns_name: privateDnsName,
+    ipv6_address: ipv6Address,
     subnet_id: subnetId,
     security_group_id: securityGroupId,
     username: "root",
     password: credentialPasswordValue(credential),
     credential_type: credential.type,
     ssh_command: publicDnsName ? `ssh root@${publicDnsName}` : "",
+    ...(warnings.length > 0 ? { ipv6_warnings: warnings } : {}),
     ...(waitError
       ? {
           warning:
@@ -1403,6 +1435,26 @@ export async function deployRegionalEc2Instance(env, input, /** @type {ProgressR
       input.region,
       { createIfMissing: true },
     );
+
+    // IPv6（選用）：子網必須先有 IPv6 CIDR 才能以 Ipv6AddressCount 啟動，
+    // 因此完整開通 VPC/子網 CIDR、IGW 路由與安全群組規則。
+    const ipv6Warnings = [];
+    if (isIpv6Enabled(input)) {
+      onProgress("ensure_vpc_ipv6", {});
+      const vpcIpv6Cidr = await ensureVpcIpv6Cidr(env, input.region, vpc.vpcId, onProgress);
+      onProgress("ensure_subnet_ipv6", {});
+      await ensureSubnetIpv6Cidr(
+        env, input.region, vpc.vpcId, subnet.subnetId, vpcIpv6Cidr, onProgress,
+      );
+      onProgress("ensure_ipv6_route", {});
+      const route = await ensureIpv6RouteToIgw(env, input.region, vpc.vpcId, subnet.subnetId);
+      if (route.skipped && route.reason) {
+        ipv6Warnings.push(route.reason);
+      }
+      onProgress("ensure_ipv6_sg", {});
+      ipv6Warnings.push(...await ensureEniIpv6SgRules(env, input.region, [securityGroupId]));
+    }
+
     onProgress("resources_ready", {
       subnet_id: subnet.subnetId,
       security_group_id: securityGroupId,
@@ -1427,6 +1479,7 @@ export async function deployRegionalEc2Instance(env, input, /** @type {ProgressR
       "NetworkInterface.1.SubnetId": subnet.subnetId,
       "NetworkInterface.1.AssociatePublicIpAddress": "true",
       "NetworkInterface.1.SecurityGroupId.1": securityGroupId,
+      ...(isIpv6Enabled(input) ? { "NetworkInterface.1.Ipv6AddressCount": "1" } : {}),
     };
     addTagSpecification(runParams, 1, "instance", buildManagedTags(input.region, {
       Name: formatResourceName("regional-instance", input.region),
@@ -1480,11 +1533,13 @@ export async function deployRegionalEc2Instance(env, input, /** @type {ProgressR
       publicDnsName: instance.publicDnsName,
       privateIpAddress: instance.privateIpAddress,
       privateDnsName: instance.privateDnsName,
+      ipv6Address: await readInstanceIpv6Address(env, input.region, launched.instanceId),
       subnetId: subnet.subnetId,
       securityGroupId,
       credential,
       ready: true,
       instanceType: regionalInstanceType,
+      warnings: ipv6Warnings,
     });
   } catch (error) {
     throw mapAwsError(error);

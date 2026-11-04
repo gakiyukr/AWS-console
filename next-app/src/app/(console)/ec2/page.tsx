@@ -33,6 +33,12 @@ interface ProgressEntry {
 
 const STAGE_LABELS: Record<string, string> = {
   validating: "開始驗證部署輸入",
+  ensure_vpc_ipv6: "確保 VPC IPv6 CIDR",
+  ensure_subnet_ipv6: "確保子網 IPv6 CIDR",
+  ensure_ipv6_route: "設定 IPv6 公網路由",
+  ensure_ipv6_sg: "設定 IPv6 安全群組規則",
+  waiting_vpc_ipv6: "等待 VPC IPv6 CIDR 關聯完成",
+  waiting_subnet_ipv6: "等待子網 IPv6 CIDR 關聯完成",
   resources_ready: "網路資源已就緒",
   credentials_ready: "登入憑證已套用",
   instance_launched: "EC2 執行個體已啟動",
@@ -62,6 +68,7 @@ export default function Ec2Page() {
     credentialType: "ssh_key" as "ssh_key" | "password",
     sshKeyId: null as number | null,
     rootPassword: "",
+    ipv6: false,
   });
   const [loadingKeys, setLoadingKeys] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
@@ -215,6 +222,7 @@ export default function Ec2Page() {
           region: form.region,
           vpc_id: form.vpcId,
           os: form.os,
+          ipv6: form.ipv6,
           ...credentialPayload(),
         }),
       });
@@ -347,6 +355,21 @@ export default function Ec2Page() {
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* IPv6：完整開通（VPC/子網 CIDR、IGW 路由、安全群組規則） */}
+          <div className="flex items-center rounded-md border p-4">
+            <label htmlFor="ec2-ipv6" className="flex items-center gap-2 text-sm">
+              <input
+                id="ec2-ipv6"
+                type="checkbox"
+                className="h-4 w-4"
+                checked={form.ipv6}
+                disabled={busy}
+                onChange={event => setForm(previous => ({ ...previous, ipv6: event.target.checked }))}
+              />
+              啟用 IPv6（完整開通：CIDR、公網路由與安全群組規則）
+            </label>
           </div>
 
           {/* 登入憑證：公鑰取自 D1 公鑰庫，密碼僅存在於本次請求 */}

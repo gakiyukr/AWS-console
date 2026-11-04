@@ -446,16 +446,16 @@ export default function MachinesPage() {
                     名稱、地區、狀態壓成折行，也避免寬螢幕把留白拉散。
                     名稱欄最寬以容納長執行個體名稱（超出以 truncate 省略），
                     其餘欄位依內容需求給定；總寬小於容器時橫向捲動。 */}
-                <Table.Content aria-label="機器清單" className="min-w-[1560px] table-fixed">
+                <Table.Content aria-label="機器清單" className="min-w-[1720px] table-fixed">
                   <Table.Header>
                     <Table.Column isRowHeader className="w-[300px]">名稱</Table.Column>
                     <Table.Column className="w-[130px]">地區</Table.Column>
                     <Table.Column className="w-[160px]">AWS 帳號</Table.Column>
                     <Table.Column className="w-[100px]">狀態</Table.Column>
                     <Table.Column className="w-[130px]">公網 IP</Table.Column>
-                    <Table.Column className="w-[200px]">IPv6</Table.Column>
-                    <Table.Column className="w-[280px]">DNS</Table.Column>
-                    <Table.Column className="w-[280px]">操作</Table.Column>
+                    <Table.Column className="w-[190px]">IPv6</Table.Column>
+                    <Table.Column className="w-[250px]">DNS</Table.Column>
+                    <Table.Column className="w-[450px]">操作</Table.Column>
                   </Table.Header>
                   <Table.Body>
                     {machines.map(machine => (

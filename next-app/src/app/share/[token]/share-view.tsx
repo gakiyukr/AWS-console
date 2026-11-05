@@ -6,7 +6,7 @@
 // 按「連結×機器」強制，前端另以 cooldownUntil 倒數主動停用按鈕。
 // 後台啟用人機驗證時，需先通過 Cap widget（PoW）才能觸發換 IP；
 // 兌換憑證為一次性，每次更換後 widget 會重置待重新驗證。
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw, ShieldCheck, Zap } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import Script from "next/script";
@@ -46,17 +46,28 @@ const CAP_WIDGET_I18N: Record<string, string> = {
   "data-cap-i18n-error-aria-label": "發生錯誤，請重試",
 };
 
-// Cap widget 容器組件：掛載自訂元素，屬性與事件監聽一次到位
-function CapWidgetBox({
-  config,
-  onSolve,
-  onReset,
-}: {
-  config: CaptchaConfig
+interface CapWidgetBoxProps {
+  endpoint: string
+  siteKey: string
   onSolve: (token: string) => void
   onReset: () => void
-}) {
+}
+
+// Cap widget 容器組件：掛載自訂元素，使用 stable ref 監聽事件，避免定時器刷新重置 widget
+const CapWidgetBox = memo(function CapWidgetBox({
+  endpoint,
+  siteKey,
+  onSolve,
+  onReset,
+}: CapWidgetBoxProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const onSolveRef = useRef(onSolve);
+  const onResetRef = useRef(onReset);
+
+  useEffect(() => {
+    onSolveRef.current = onSolve;
+    onResetRef.current = onReset;
+  }, [onSolve, onReset]);
 
   useEffect(() => {
     const host = containerRef.current;
@@ -64,30 +75,38 @@ function CapWidgetBox({
     host.innerHTML = "";
 
     const widget = document.createElement("cap-widget");
-    const normalizedEndpoint = config.endpoint.replace(/\/+$/, "");
+    const normalizedEndpoint = endpoint.replace(/\/+$/, "");
     widget.setAttribute("endpoint", normalizedEndpoint);
-    widget.setAttribute("site-key", config.siteKey);
-    widget.setAttribute("sitekey", config.siteKey);
-    widget.setAttribute("data-cap-api-endpoint", `${normalizedEndpoint}/${config.siteKey}/`);
+    widget.setAttribute("site-key", siteKey);
+    widget.setAttribute("sitekey", siteKey);
+    widget.setAttribute("data-cap-api-endpoint", `${normalizedEndpoint}/${siteKey}/`);
 
     for (const [attribute, value] of Object.entries(CAP_WIDGET_I18N)) {
       widget.setAttribute(attribute, value);
     }
-    widget.addEventListener("solve", event => {
+    const handleSolve = (event: Event) => {
       const token = (event as CustomEvent<{ token?: string }>).detail?.token;
-      if (token) onSolve(token);
-    });
-    widget.addEventListener("reset", onReset);
-    widget.addEventListener("error", onReset);
+      if (token) onSolveRef.current(token);
+    };
+    const handleReset = () => {
+      onResetRef.current();
+    };
+
+    widget.addEventListener("solve", handleSolve);
+    widget.addEventListener("reset", handleReset);
+    widget.addEventListener("error", handleReset);
     host.appendChild(widget);
 
     return () => {
+      widget.removeEventListener("solve", handleSolve);
+      widget.removeEventListener("reset", handleReset);
+      widget.removeEventListener("error", handleReset);
       widget.remove();
     };
-  }, [config, onSolve, onReset]);
+  }, [endpoint, siteKey]);
 
   return <div ref={containerRef} className="flex min-h-[56px] items-center justify-center" />;
-}
+});
 
 // 連結失效（被刪除或停用）時的畫面：與頁面 404 一致的文案
 function LinkGone() {
@@ -204,9 +223,9 @@ export default function ShareView({ token, linkName }: { token: string; linkName
   }, []);
 
   /** 清空憑證狀態。 */
-  function resetWidget() {
+  const resetWidget = useCallback(() => {
     setCaptchaToken(null);
-  }
+  }, []);
 
   async function refresh() {
     try {
@@ -428,9 +447,10 @@ export default function ShareView({ token, linkName }: { token: string; linkName
                       <span>請先完成下方的人機驗證以啟用更換：</span>
                     </div>
                     <CapWidgetBox
-                      config={captchaConfig}
+                      endpoint={captchaConfig.endpoint}
+                      siteKey={captchaConfig.siteKey}
                       onSolve={setCaptchaToken}
-                      onReset={() => setCaptchaToken(null)}
+                      onReset={resetWidget}
                     />
                   </div>
                 ) : null}

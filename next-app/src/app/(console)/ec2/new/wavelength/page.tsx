@@ -16,6 +16,7 @@ import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
 import { CustomSelect } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 interface SelectOption {
   value: string
@@ -85,7 +86,6 @@ const EMPTY_FORM = {
   instanceType: "",
   os: "",
   enableForwarder: false,
-  useExistingInstance: false,
   existingInstanceId: "",
   credentialType: "ssh_key" as "ssh_key" | "password",
   sshKeyId: null as number | null,
@@ -281,16 +281,12 @@ export default function WavelengthPage() {
       }
     }
   }
-  // 覆蓋參數解決 React 閉包過期狀態：勾選 checkbox 或切換 Zone 時，
-  // setState 尚未生效，閉包內的 form.useExistingInstance / form.zone 仍是舊值，
-  // 直接讀取會在守衛處短路而不發出請求。
-  async function loadExistingInstances(overrides?: { useExisting?: boolean; zone?: string; vpc?: string }) {
-    const useExisting = overrides?.useExisting ?? form.useExistingInstance;
+  async function loadExistingInstances(overrides?: { zone?: string; vpc?: string }) {
     const zone = overrides?.zone ?? form.zone;
     const vpcId = overrides?.vpc ?? form.vpcId;
     setExistingInstances([]);
     updateForm({ existingInstanceId: "" });
-    if (!useExisting || !form.region || !zone || !vpcId) return;
+    if (!form.region || !zone || !vpcId) return;
 
     setLoadingInstances(true);
     try {
@@ -315,7 +311,7 @@ export default function WavelengthPage() {
     // 否則會送出 vpc_id 與 instance_id 互相矛盾的 payload。
     setExistingInstances([]);
     updateForm({ existingInstanceId: "" });
-    if (form.useExistingInstance && form.region && form.zone) {
+    if (form.region && form.zone) {
       void loadExistingInstances({ vpc: vpcId });
     }
   }
@@ -323,11 +319,6 @@ export default function WavelengthPage() {
   function selectZone(zone: string) {
     updateForm({ zone });
     void loadInstanceTypes(zone).then(() => loadExistingInstances({ zone }));
-  }
-
-  function toggleUseExistingInstance(checked: boolean) {
-    updateForm({ useExistingInstance: checked });
-    if (checked) void loadExistingInstances({ useExisting: true });
   }
   async function runJsonAction(action: string, endpoint: string, payload: Record<string, unknown>, success: string) {
     setBusyAction(action);
@@ -572,19 +563,24 @@ export default function WavelengthPage() {
                 onChange={val => updateForm({ os: val })}
               />
             </div>
-            <div className="flex items-end pb-2">
-              <label htmlFor="wl-forwarder" className="flex items-center gap-2 text-sm">
-                <input
-                  id="wl-forwarder"
-                  type="checkbox"
-                  className="h-4 w-4"
-                  checked={form.enableForwarder}
-                  disabled={isBusy}
-                  onChange={event => updateForm({ enableForwarder: event.target.checked })}
-                />
+          </div>
+
+          {/* 選擇是否同時部署 forwarder */}
+          <div className="flex items-center justify-between rounded-lg border border-divider bg-surface/40 p-4">
+            <div className="space-y-0.5 pr-4">
+              <label htmlFor="wl-forwarder" className="text-sm font-medium cursor-pointer text-foreground">
                 部署 WL 時同時建立 SSH forwarder
               </label>
+              <p className="text-xs text-muted">
+                在該 VPC 與 Zone 自動建立公網 SSH 跳板機，方便從外部網路透過 SSH 轉送存取私有 Wavelength 執行個體
+              </p>
             </div>
+            <Switch
+              id="wl-forwarder"
+              checked={form.enableForwarder}
+              disabled={isBusy}
+              onCheckedChange={checked => updateForm({ enableForwarder: checked })}
+            />
           </div>
 
           {/* 登入憑證為兩種部署動作共用：公鑰取自 D1 公鑰庫，密碼僅存在於本次請求 */}
@@ -655,29 +651,41 @@ export default function WavelengthPage() {
 
       <Card>
         <Card.Content className="grid gap-4 p-6">
-          <div>
-            <h3 className="text-base font-semibold">既有 Wavelength EC2</h3>
-            <p className="text-sm text-muted">為指定 VPC 與 Zone 內的既有執行個體建立區域型 SSH forwarder</p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-base font-semibold">既有 Wavelength EC2</h3>
+              <p className="text-sm text-muted">為指定 VPC 與 Zone 內的既有執行個體建立區域型 SSH forwarder</p>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              isDisabled={!form.region || !form.zone || !form.vpcId || loadingInstances || isBusy}
+              onPress={() => void loadExistingInstances()}
+            >
+              <RefreshCw
+                aria-hidden
+                size={14}
+                className={`mr-1.5 ${loadingInstances ? "animate-spin" : ""}`}
+              />
+              重新整理執行個體
+            </Button>
           </div>
           <div className="grid gap-4">
-            <label htmlFor="existing-forwarder" className="flex h-5 items-center gap-2 text-sm">
-              <input
-                id="existing-forwarder"
-                type="checkbox"
-                className="h-4 w-4"
-                checked={form.useExistingInstance}
-                disabled={isBusy}
-                onChange={event => toggleUseExistingInstance(event.target.checked)}
-              />
-              載入既有 WL EC2
-            </label>
             <div className="grid gap-2">
               <label htmlFor="existing-instance" className="text-sm font-medium">目標執行個體</label>
               <CustomSelect
                 id="existing-instance"
                 value={form.existingInstanceId}
-                placeholder={loadingInstances ? "載入中..." : "請選擇既有執行個體"}
-                disabled={!form.useExistingInstance || loadingInstances || isBusy}
+                placeholder={
+                  !form.region || !form.zone || !form.vpcId
+                    ? "請先在上方選取 Region、Zone 與 VPC"
+                    : loadingInstances
+                      ? "載入既有執行個體中..."
+                      : existingInstances.length === 0
+                        ? "該 Zone 與 VPC 內無可用執行個體（可點右上方重新整理）"
+                        : "請選擇既有執行個體"
+                }
+                disabled={!form.region || !form.zone || !form.vpcId || loadingInstances || isBusy}
                 options={existingInstances.map(instance => ({
                   value: instance.instance_id,
                   label: `${instance.instance_id} | ${instance.private_ip || "無私網 IP"} | ${instance.state} | ${instance.instance_type}`,

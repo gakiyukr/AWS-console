@@ -15,6 +15,7 @@ import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
 import { CustomSelect } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 interface SelectOption {
   value: string
@@ -361,18 +362,19 @@ export default function Ec2Page() {
           </div>
 
           {/* IPv6：完整開通（VPC/子網 CIDR、IGW 路由、安全群組規則） */}
-          <div className="flex items-center rounded-md border p-4">
-            <label htmlFor="ec2-ipv6" className="flex items-center gap-2 text-sm">
-              <input
-                id="ec2-ipv6"
-                type="checkbox"
-                className="h-4 w-4"
-                checked={form.ipv6}
-                disabled={busy}
-                onChange={event => setForm(previous => ({ ...previous, ipv6: event.target.checked }))}
-              />
-              啟用 IPv6（完整開通：CIDR、公網路由與安全群組規則）
-            </label>
+          <div className="flex items-center justify-between rounded-lg border border-divider bg-surface/40 p-4">
+            <div className="space-y-0.5 pr-4">
+              <label htmlFor="ec2-ipv6" className="text-sm font-medium cursor-pointer text-foreground">
+                啟用 IPv6
+              </label>
+              <p className="text-xs text-muted">完整開通 VPC/子網 CIDR、IGW 路由與安全群組規則</p>
+            </div>
+            <Switch
+              id="ec2-ipv6"
+              checked={form.ipv6}
+              disabled={busy}
+              onCheckedChange={checked => setForm(previous => ({ ...previous, ipv6: checked }))}
+            />
           </div>
 
           {/* 登入憑證：公鑰取自 D1 公鑰庫，密碼僅存在於本次請求 */}

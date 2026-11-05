@@ -3,8 +3,11 @@
 import { Button } from "@heroui/react/button";
 import {
   CloudCog,
+  Cpu,
   KeyRound,
+  LayoutDashboard,
   Menu,
+  Network,
   ScrollText,
   Server,
   Settings,
@@ -17,8 +20,11 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 const navigation = [
-  { href: "/ec2", label: "EC2", icon: Server },
-  { href: "/lightsail", label: "Lightsail", icon: Zap },
+  { href: "/", label: "總覽", icon: LayoutDashboard },
+  { href: "/ec2", label: "AWS EC2", icon: Server },
+  { href: "/lightsail", label: "AWS Lightsail", icon: Zap },
+  { href: "/instances", label: "OCI 執行個體", icon: Cpu },
+  { href: "/reserved-ips", label: "OCI 保留 IP", icon: Network },
   { href: "/logs", label: "操作日誌", icon: ScrollText },
   { href: "/accounts", label: "帳號管理", icon: KeyRound },
   { href: "/share", label: "分享連結", icon: Share2 },
@@ -49,8 +55,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <CloudCog aria-hidden="true" size={20} />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">AWS Console</p>
-            <p className="text-xs text-muted">雲端基礎設施</p>
+            <p className="truncate text-sm font-semibold">Cloud Console</p>
+            <p className="text-xs text-muted">多雲基礎設施主控台</p>
           </div>
           <Button
             aria-label="關閉導覽選單"
@@ -112,9 +118,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Menu aria-hidden="true" size={20} />
           </Button>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm text-muted">AWS 主控台</p>
+            <p className="truncate text-sm text-muted">Cloud 主控台</p>
           </div>
-          <span className="text-xs text-muted">預覽環境</span>
+          <span className="text-xs text-muted">生產環境</span>
         </header>
 
         <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">

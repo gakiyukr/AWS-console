@@ -125,6 +125,8 @@ export async function deleteSshPublicKey(db, id) {
  * @property {string} status
  * @property {unknown} [detail]
  * @property {number | null} [awsAccountId]
+ * @property {number | null} [ociAccountId]
+ * @property {string | null | undefined} [displayName]
  */
 
 /**
@@ -143,13 +145,15 @@ export async function appendOperationLog(db, entry) {
     status,
     detail = null,
     awsAccountId = null,
+    ociAccountId = null,
+    displayName = null,
   } = entry;
   const serialized = detail === null || detail === undefined
     ? null
     : (typeof detail === "string" ? detail : JSON.stringify(detail));
   await db
-    .prepare("INSERT INTO operation_log (aws_account_id, action, region, instance_id, status, detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
-    .bind(awsAccountId, action, region, instanceId, status, serialized)
+    .prepare("INSERT INTO operation_log (aws_account_id, oci_account_id, action, region, instance_id, display_name, status, detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)")
+    .bind(awsAccountId, ociAccountId, action, region, instanceId, displayName, status, serialized)
     .run();
 }
 
@@ -167,7 +171,7 @@ export async function appendOperationLog(db, entry) {
  * @param {OperationLogQuery} [options] 可選篩選條件
  */
 export async function listOperationLogs(db, options = {}) {
-  const { action, status, awsAccountId, limit = 200 } = options;
+  const { action, status, awsAccountId, ociAccountId, limit = 200 } = options;
   const conditions = [];
   const bindings = [];
   if (action) {
@@ -182,6 +186,10 @@ export async function listOperationLogs(db, options = {}) {
     conditions.push("aws_account_id = ?");
     bindings.push(Number(awsAccountId));
   }
+  if (ociAccountId) {
+    conditions.push("oci_account_id = ?");
+    bindings.push(Number(ociAccountId));
+  }
   const whereSql = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
   const numericLimit = Number(limit);
   const safeLimit = Number.isFinite(numericLimit) && numericLimit >= 1
@@ -189,7 +197,7 @@ export async function listOperationLogs(db, options = {}) {
     : 200;
   bindings.push(safeLimit);
   const { results } = await db
-    .prepare(`SELECT id, aws_account_id AS awsAccountId, created_at AS createdAt, action, region, instance_id AS instanceId, status, detail FROM operation_log${whereSql} ORDER BY id DESC LIMIT ?`)
+    .prepare(`SELECT id, aws_account_id AS awsAccountId, oci_account_id AS ociAccountId, created_at AS createdAt, action, region, instance_id AS instanceId, display_name AS displayName, status, detail FROM operation_log${whereSql} ORDER BY id DESC LIMIT ?`)
     .bind(...bindings)
     .all();
   return results;

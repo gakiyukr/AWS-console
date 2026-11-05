@@ -1,55 +1,47 @@
-// Cap（trycap.dev）人機驗證的伺服端工具：
-// 支援 Cap Standalone 自建服務端（tiago2/cap）與託管服務。
-//
-// 驗證流程參照 trycap.dev 規範：
-// 1. 前端組件：<cap-widget site-key="..." endpoint="..." data-cap-api-endpoint="..."></cap-widget>
-// 2. 伺服端校驗：POST <endpoint>/<site-key>/siteverify（或 <endpoint>/siteverify）
-//    Body: { secret: "<secret>", response: "<token>", token: "<token>" }
-//    回傳: { success: true }
-//
-// 設定來源：D1 的 captcha_settings（設定頁配置，密鑰加密儲存）優先；
-// 未配置時退回環境變量 CAP_ENDPOINT、CAP_SITE_KEY、CAP_SECRET。
+// 人機驗證服務端工具：支援多渠道備援（Cap、Cloudflare Turnstile、hCaptcha）。
+// 訪客端可切換不同驗證器，若任一服務異常可無縫切換備援。
 import { decryptCaptchaSecret, encryptCaptchaSecret } from "./credential-crypto.js";
 import { getAppSetting } from "./db.js";
 
-/** Challenge 與兌換憑證綁定的 scope（相容舊版本地端點）。 */
-export const CAP_SCOPE = "share-rotate";
-
-/** app_settings 中分享頁人機驗證開關的鍵名。 */
+/** app_settings 中分享頁人機驗證總開關的鍵名。 */
 export const SHARE_CAPTCHA_ENABLED_KEY = "share_captcha_enabled";
 
-/** Cap secret 最短長度（≥8 bytes）。 */
-export const CAP_SECRET_MIN_BYTES = 8;
+/** 支援的人機驗證服務商定義。 */
+export const CAPTCHA_PROVIDERS = [
+  { id: "cap", name: "Cap", requiresEndpoint: true },
+  { id: "turnstile", name: "Cloudflare Turnstile", requiresEndpoint: false },
+  { id: "hcaptcha", name: "hCaptcha", requiresEndpoint: false },
+];
 
-/** 分享頁人機驗證開關（app_settings；未設定視為關閉）。 */
+/** 分享頁人機驗證總開關（app_settings；未設定視為關閉）。 */
 export async function isShareCaptchaEnabled(db) {
   return (await getAppSetting(db, SHARE_CAPTCHA_ENABLED_KEY)) === "1";
 }
 
 /**
- * 取得完整 Cap 設定（實例端點、Site Key、驗證私鑰）：
- * D1（設定頁配置）優先，退回環境變量。
- * @returns {Promise<{
- *   configured: boolean,
- *   source: "db" | "env" | null,
- *   endpoint: string,
- *   siteKey: string,
- *   secret: string,
- *   secretHint: string | null
- * }>}
+ * 取得單一人機驗證渠道設定。
+ * @param {object} env
+ * @param {"cap" | "turnstile" | "hcaptcha"} provider
  */
-export async function getCapSettings(env) {
+export async function getCaptchaProvider(env, provider) {
   let endpoint = "";
   let siteKey = "";
   let secret = "";
   let secretHint = null;
   let source = null;
+  let enabled = false;
 
   if (env?.DB) {
     const row = await env.DB
-      .prepare("SELECT endpoint, site_key AS siteKey, secret_ciphertext AS secretCiphertext, secret_iv AS secretIv, secret_hint AS secretHint FROM captcha_settings WHERE id = 1")
+      .prepare(`SELECT provider, enabled, endpoint, site_key AS siteKey,
+                       secret_ciphertext AS secretCiphertext, secret_iv AS secretIv,
+                       secret_hint AS secretHint
+                FROM captcha_providers WHERE provider = ?1`)
+      .bind(provider)
       .first();
+
     if (row) {
+      enabled = Boolean(row.enabled);
       endpoint = typeof row.endpoint === "string" ? row.endpoint.trim() : "";
       siteKey = typeof row.siteKey === "string" ? row.siteKey.trim() : "";
       if (row.secretCiphertext && env?.CREDENTIAL_ENCRYPTION_KEY) {
@@ -65,21 +57,42 @@ export async function getCapSettings(env) {
   }
 
   // 環境變量 fallback
-  if (!endpoint && env?.CAP_ENDPOINT) {
-    endpoint = String(env.CAP_ENDPOINT).trim();
-  }
-  if (!siteKey && env?.CAP_SITE_KEY) {
-    siteKey = String(env.CAP_SITE_KEY).trim();
-  }
-  if (!secret && env?.CAP_SECRET) {
-    secret = String(env.CAP_SECRET).trim();
-    secretHint = secret ? secret.slice(-4) : null;
-    source = "env";
+  if (provider === "cap") {
+    if (!endpoint && env?.CAP_ENDPOINT) endpoint = String(env.CAP_ENDPOINT).trim();
+    if (!siteKey && env?.CAP_SITE_KEY) siteKey = String(env.CAP_SITE_KEY).trim();
+    if (!secret && env?.CAP_SECRET) {
+      secret = String(env.CAP_SECRET).trim();
+      secretHint = secret ? secret.slice(-4) : null;
+      source = "env";
+      enabled = true;
+    }
+  } else if (provider === "turnstile") {
+    if (!siteKey && env?.TURNSTILE_SITE_KEY) siteKey = String(env.TURNSTILE_SITE_KEY).trim();
+    if (!secret && env?.TURNSTILE_SECRET) {
+      secret = String(env.TURNSTILE_SECRET).trim();
+      secretHint = secret ? secret.slice(-4) : null;
+      source = "env";
+      enabled = true;
+    }
+  } else if (provider === "hcaptcha") {
+    if (!siteKey && env?.HCAPTCHA_SITE_KEY) siteKey = String(env.HCAPTCHA_SITE_KEY).trim();
+    if (!secret && env?.HCAPTCHA_SECRET) {
+      secret = String(env.HCAPTCHA_SECRET).trim();
+      secretHint = secret ? secret.slice(-4) : null;
+      source = "env";
+      enabled = true;
+    }
   }
 
-  const configured = Boolean(endpoint && siteKey && secret);
+  const def = CAPTCHA_PROVIDERS.find(p => p.id === provider);
+  const configured = def?.requiresEndpoint
+    ? Boolean(endpoint && siteKey && secret)
+    : Boolean(siteKey && secret);
 
   return {
+    provider,
+    name: def?.name || provider,
+    enabled,
     configured,
     source,
     endpoint,
@@ -89,22 +102,23 @@ export async function getCapSettings(env) {
   };
 }
 
-/**
- * 取得 Cap 簽章密鑰（相容舊呼叫）。
- * @returns {Promise<{ secret: string, source: "db" | "env" } | null>}
- */
-export async function getCapSecret(env) {
-  const settings = await getCapSettings(env);
-  if (settings.secret) {
-    return { secret: settings.secret, source: settings.source || "db" };
-  }
-  return null;
+/** 取得所有已註冊的渠道設定狀態清單。 */
+export async function getAllCaptchaProviders(env) {
+  return await Promise.all(
+    CAPTCHA_PROVIDERS.map(item => getCaptchaProvider(env, item.id))
+  );
 }
 
-/** 人機驗證是否已完整配置（Endpoint、Site Key 與 Secret 均齊全）。 */
+/** 取得所有已啟用且配置完成的渠道清單（供分享頁訪客使用）。 */
+export async function getActiveCaptchaProviders(env) {
+  const all = await getAllCaptchaProviders(env);
+  return all.filter(item => item.configured && item.enabled);
+}
+
+/** 是否至少有一個人機驗證渠道已配置並啟用。 */
 export async function isCapConfigured(env) {
-  const settings = await getCapSettings(env);
-  return settings.configured;
+  const active = await getActiveCaptchaProviders(env);
+  return active.length > 0;
 }
 
 /** 相容舊別名。 */
@@ -113,15 +127,15 @@ export async function isCapSecretConfigured(env) {
 }
 
 /**
- * 儲存設定頁配置的 Cap 設定（實例端點、Site Key、驗證私鑰）。
- * 若 secret 為空且已有現有密鑰，則保留現有密鑰。
+ * 儲存渠道設定。若 secret 為空且已有現有密鑰，則保留現有密鑰。
  */
-export async function saveCaptchaSettings(db, encryptionKey, { endpoint, siteKey, secret }) {
+export async function saveCaptchaProvider(db, encryptionKey, { provider, enabled, endpoint, siteKey, secret }) {
   const normalizedEndpoint = (endpoint || "").trim().replace(/\/+$/, "");
   const normalizedSiteKey = (siteKey || "").trim();
 
   const existing = await db
-    .prepare("SELECT secret_ciphertext AS secretCiphertext, secret_iv AS secretIv, secret_hint AS secretHint FROM captcha_settings WHERE id = 1")
+    .prepare("SELECT secret_ciphertext AS secretCiphertext, secret_iv AS secretIv, secret_hint AS secretHint FROM captcha_providers WHERE provider = ?1")
+    .bind(provider)
     .first();
 
   let ciphertext = existing?.secretCiphertext;
@@ -137,60 +151,65 @@ export async function saveCaptchaSettings(db, encryptionKey, { endpoint, siteKey
   }
 
   if (!ciphertext || !iv) {
-    throw new Error("缺少人機驗證密鑰 (Secret Key)");
+    throw new Error(`缺少 ${provider} 驗證密鑰 (Secret Key)`);
   }
 
   await db
-    .prepare(`INSERT INTO captcha_settings (id, endpoint, site_key, secret_ciphertext, secret_iv, secret_hint, updated_at)
-      VALUES (1, ?1, ?2, ?3, ?4, ?5, datetime('now'))
-      ON CONFLICT(id) DO UPDATE SET
-        endpoint = ?1,
-        site_key = ?2,
-        secret_ciphertext = ?3,
-        secret_iv = ?4,
-        secret_hint = ?5,
+    .prepare(`INSERT INTO captcha_providers (provider, enabled, endpoint, site_key, secret_ciphertext, secret_iv, secret_hint, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
+      ON CONFLICT(provider) DO UPDATE SET
+        enabled = ?2,
+        endpoint = ?3,
+        site_key = ?4,
+        secret_ciphertext = ?5,
+        secret_iv = ?6,
+        secret_hint = ?7,
         updated_at = datetime('now')`)
-    .bind(normalizedEndpoint, normalizedSiteKey, ciphertext, iv, hint)
+    .bind(provider, enabled ? 1 : 0, normalizedEndpoint, normalizedSiteKey, ciphertext, iv, hint)
     .run();
+
+  // 若為 cap，同步寫入 captcha_settings 表以相容舊 SQL
+  if (provider === "cap") {
+    try {
+      await db
+        .prepare(`INSERT INTO captcha_settings (id, endpoint, site_key, secret_ciphertext, secret_iv, secret_hint, updated_at)
+          VALUES (1, ?1, ?2, ?3, ?4, ?5, datetime('now'))
+          ON CONFLICT(id) DO UPDATE SET
+            endpoint = ?1, site_key = ?2, secret_ciphertext = ?3, secret_iv = ?4, secret_hint = ?5, updated_at = datetime('now')`)
+        .bind(normalizedEndpoint, normalizedSiteKey, ciphertext, iv, hint)
+        .run();
+    } catch {
+      // 舊表同步失敗不影響主邏輯
+    }
+  }
 }
 
-/** 相容舊別名：儲存設定頁配置的密鑰。 */
-export async function saveCaptchaSecret(db, encryptionKey, secret) {
-  return saveCaptchaSettings(db, encryptionKey, { endpoint: "", siteKey: "", secret });
-}
-
-/** 清除設定頁配置的人機驗證設定。 */
-export async function clearCaptchaSettings(db) {
-  const result = await db.prepare("DELETE FROM captcha_settings WHERE id = 1").run();
+/** 清除特定渠道設定。 */
+export async function clearCaptchaProvider(db, provider) {
+  const result = await db.prepare("DELETE FROM captcha_providers WHERE provider = ?1").bind(provider).run();
+  if (provider === "cap") {
+    try {
+      await db.prepare("DELETE FROM captcha_settings WHERE id = 1").run();
+    } catch {
+      // 略過
+    }
+  }
   return (result.meta.changes ?? 0) > 0;
 }
 
-/** 相容舊別名。 */
-export async function clearCaptchaSecret(db) {
-  return clearCaptchaSettings(db);
-}
+// ─── 伺服端 Token 驗證 ─────────────────────────────────────
 
 /**
- * 伺服端向 Cap 實例驗證訪客提交的 token。
- * 遵循 trycap.dev /siteverify 規範：
- * POST <endpoint>/<site-key>/siteverify
- * Body: { secret, response: token, token }
- * @param {object} env
- * @param {string} token
- * @returns {Promise<{ success: boolean, error?: string }>}
+ * 驗證 Cap (trycap.dev) token。
  */
 export async function verifyCapToken(env, token) {
-  if (!token || typeof token !== "string" || !token.trim()) {
-    return { success: false, error: "未提供驗證憑證 (token)" };
-  }
-  const config = await getCapSettings(env);
+  const config = await getCaptchaProvider(env, "cap");
   if (!config.configured) {
-    return { success: false, error: "人機驗證尚未完整配置（需包含實例網址、Site Key 與 Secret Key）" };
+    return { success: false, error: "Cap 人機驗證尚未完整配置" };
   }
 
   const baseUrl = config.endpoint.replace(/\/+$/, "");
   const primaryUrl = `${baseUrl}/${encodeURIComponent(config.siteKey)}/siteverify`;
-
   const payload = {
     secret: config.secret,
     response: token.trim(),
@@ -200,21 +219,14 @@ export async function verifyCapToken(env, token) {
   try {
     let res = await fetch(primaryUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      },
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
       body: JSON.stringify(payload),
     });
 
-    // 若 /<site-key>/siteverify 回傳 404，嘗試 Cap 根路徑 /siteverify
     if (res.status === 404) {
       res = await fetch(`${baseUrl}/siteverify`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-        },
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
         body: JSON.stringify({ ...payload, sitekey: config.siteKey }),
       });
     }
@@ -228,11 +240,114 @@ export async function verifyCapToken(env, token) {
       return { success: true };
     }
     const errorCodes = Array.isArray(data?.["error-codes"]) ? data["error-codes"].join(", ") : "";
-    return { success: false, error: errorCodes ? `人機驗證未通過 (${errorCodes})` : "人機驗證未通過或憑證已失效" };
+    return { success: false, error: errorCodes ? `Cap 驗證未通過 (${errorCodes})` : "Cap 驗證未通過或已失效" };
   } catch (error) {
     return { success: false, error: `無法連線至 Cap 驗證伺服器：${error?.message || error}` };
   }
 }
+
+/**
+ * 驗證 Cloudflare Turnstile token。
+ * 遵循官方 siteverify 規範：POST https://challenges.cloudflare.com/turnstile/v0/siteverify
+ */
+export async function verifyTurnstileToken(env, token) {
+  const config = await getCaptchaProvider(env, "turnstile");
+  if (!config.configured) {
+    return { success: false, error: "Cloudflare Turnstile 人機驗證尚未配置" };
+  }
+
+  try {
+    const formData = new URLSearchParams({
+      secret: config.secret,
+      response: token.trim(),
+    });
+
+    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: formData.toString(),
+    });
+
+    if (!res.ok) {
+      return { success: false, error: `Cloudflare Turnstile 驗證失敗 (HTTP ${res.status})` };
+    }
+
+    const data = await res.json();
+    if (data?.success === true) {
+      return { success: true };
+    }
+    const errorCodes = Array.isArray(data?.["error-codes"]) ? data["error-codes"].join(", ") : "";
+    return { success: false, error: errorCodes ? `Turnstile 驗證未通過 (${errorCodes})` : "Turnstile 驗證未通過或已過期" };
+  } catch (error) {
+    return { success: false, error: `無法連線至 Cloudflare 驗證伺服器：${error?.message || error}` };
+  }
+}
+
+/**
+ * 驗證 hCaptcha token。
+ * 遵循官方 siteverify 規範：POST https://api.hcaptcha.com/siteverify
+ */
+export async function verifyHcaptchaToken(env, token) {
+  const config = await getCaptchaProvider(env, "hcaptcha");
+  if (!config.configured) {
+    return { success: false, error: "hCaptcha 人機驗證尚未配置" };
+  }
+
+  try {
+    const formData = new URLSearchParams({
+      secret: config.secret,
+      response: token.trim(),
+      sitekey: config.siteKey,
+    });
+
+    const res = await fetch("https://api.hcaptcha.com/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: formData.toString(),
+    });
+
+    if (!res.ok) {
+      return { success: false, error: `hCaptcha 驗證失敗 (HTTP ${res.status})` };
+    }
+
+    const data = await res.json();
+    if (data?.success === true) {
+      return { success: true };
+    }
+    const errorCodes = Array.isArray(data?.["error-codes"]) ? data["error-codes"].join(", ") : "";
+    return { success: false, error: errorCodes ? `hCaptcha 驗證未通過 (${errorCodes})` : "hCaptcha 驗證未通過或已過期" };
+  } catch (error) {
+    return { success: false, error: `無法連線至 hCaptcha 驗證伺服器：${error?.message || error}` };
+  }
+}
+
+/**
+ * 依據指定的 provider 進行伺服端驗證。
+ * @param {object} env
+ * @param {string} [provider="cap"]
+ * @param {string} token
+ */
+export async function verifyCaptchaToken(env, provider, token) {
+  if (!token || typeof token !== "string" || !token.trim()) {
+    return { success: false, error: "未提供驗證憑證 (token)" };
+  }
+  const cleanProvider = (provider || "cap").toLowerCase();
+  switch (cleanProvider) {
+    case "cap":
+      return await verifyCapToken(env, token);
+    case "turnstile":
+    case "cloudflare":
+      return await verifyTurnstileToken(env, token);
+    case "hcaptcha":
+      return await verifyHcaptchaToken(env, token);
+    default:
+      return { success: false, error: `未支援的人機驗證渠道：${provider}` };
+  }
+}
+
+// ─── 舊版本相容別名 ───────────────────────────────────────
+/** Challenge 與兌換憑證綁定的 scope（相容舊版本地端點）。 */
+export const CAP_SCOPE = "share-rotate";
 
 /** SHA-256 → 小寫 hex（WebCrypto，Workers 相容）。 */
 export async function sha256Hex(text) {
@@ -255,4 +370,30 @@ export async function deriveCapTokenKey(token) {
   const id = token.slice(0, separator);
   const verToken = token.slice(separator + 1);
   return `${id}:${await sha256Hex(verToken)}`;
+}
+
+export async function getCapSettings(env) {
+  return await getCaptchaProvider(env, "cap");
+}
+export async function getCapSecret(env) {
+  const s = await getCapSettings(env);
+  return s.secret ? { secret: s.secret, source: s.source } : null;
+}
+export async function saveCaptchaSettings(db, encryptionKey, { endpoint, siteKey, secret }) {
+  return await saveCaptchaProvider(db, encryptionKey, {
+    provider: "cap",
+    enabled: true,
+    endpoint,
+    siteKey,
+    secret,
+  });
+}
+export async function saveCaptchaSecret(db, encryptionKey, secret) {
+  return await saveCaptchaSettings(db, encryptionKey, { endpoint: "", siteKey: "", secret });
+}
+export async function clearCaptchaSettings(db) {
+  return await clearCaptchaProvider(db, "cap");
+}
+export async function clearCaptchaSecret(db) {
+  return await clearCaptchaSettings(db);
 }

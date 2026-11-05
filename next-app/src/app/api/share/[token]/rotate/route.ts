@@ -12,7 +12,7 @@ import {
   touchShareLinkUsed,
 } from "@/server/utils/db.js";
 import { errorResponse, readJsonBody, sseResponse, toHttpError } from "@/server/utils/http.js";
-import { isShareCaptchaEnabled, verifyCapToken } from "@/server/utils/cap.js";
+import { isShareCaptchaEnabled, verifyCaptchaToken } from "@/server/utils/cap.js";
 import { rotateIpFailureMessage, rotatePublicIp } from "@/server/utils/power.js";
 import { syncMachineDdns } from "@/server/utils/ddns.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
@@ -50,14 +50,15 @@ export async function POST(
   const now = Date.now();
   const cooldownMs = link.cooldownMinutes * 60_000;
 
-  // 人機驗證閘門（後台開關開啟時）：伺服端向 Cap 實例驗證訪客提交的 token
+  // 人機驗證閘門（後台開關開啟時）：伺服端驗證訪客提交的 token（支援 Cap、Turnstile、hCaptcha）
   const captchaEnabled = await isShareCaptchaEnabled(env.DB);
   if (captchaEnabled) {
     const token = typeof body?.captchaToken === "string" ? body.captchaToken.trim() : "";
+    const provider = typeof body?.captchaProvider === "string" ? body.captchaProvider.trim().toLowerCase() : "cap";
     if (!token) {
       return errorResponse(403, "請先完成人機驗證。");
     }
-    const verification = await verifyCapToken(env, token);
+    const verification = await verifyCaptchaToken(env, provider, token);
     if (!verification.success) {
       return errorResponse(403, verification.error || "人機驗證未通過或憑證已失效，請重新驗證。");
     }

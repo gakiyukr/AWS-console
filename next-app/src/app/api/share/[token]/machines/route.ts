@@ -5,7 +5,7 @@
 // 失敗時該組列降級為「查詢失敗」，與 /api/machines 的行為一致。
 import { getShareLinkByToken, listMachines } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse } from "@/server/utils/http.js";
-import { getCapSettings, isShareCaptchaEnabled } from "@/server/utils/cap.js";
+import { getActiveCaptchaProviders, isShareCaptchaEnabled } from "@/server/utils/cap.js";
 import { mergeMachineStates } from "@/server/utils/power.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
@@ -51,15 +51,22 @@ export async function GET(
   }));
 
   const captchaEnabled = await isShareCaptchaEnabled(env.DB);
-  const cap = captchaEnabled ? await getCapSettings(env) : null;
-  const isCapReady = Boolean(captchaEnabled && cap?.configured);
+  const activeProviders = captchaEnabled ? await getActiveCaptchaProviders(env) : [];
+  const isCaptchaActive = captchaEnabled && activeProviders.length > 0;
+  const capProvider = activeProviders.find(p => p.provider === "cap");
 
   return jsonResponse({
     link: { name: link.name, cooldownMinutes: link.cooldownMinutes },
-    captchaEnabled: isCapReady,
-    captcha: isCapReady && cap ? {
-      endpoint: cap.endpoint,
-      siteKey: cap.siteKey,
+    captchaEnabled: isCaptchaActive,
+    captchaProviders: isCaptchaActive ? activeProviders.map(p => ({
+      provider: p.provider,
+      name: p.name,
+      endpoint: p.endpoint || undefined,
+      siteKey: p.siteKey,
+    })) : [],
+    captcha: isCaptchaActive && capProvider ? {
+      endpoint: capProvider.endpoint,
+      siteKey: capProvider.siteKey,
     } : null,
     machines: machines.map(machine => {
       const row = rows.get(machine.id) || {};

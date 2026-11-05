@@ -1,7 +1,7 @@
 'use client'
 
 // 設定：SSH 公鑰庫（部署登入用）、DDNS（Cloudflare）與人機驗證（Cap）。
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Cloud, KeyRound, Loader2, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import { Chip } from "@/components/chip";
@@ -37,111 +37,129 @@ export default function SettingsPage() {
   const [ddnsForm, setDdnsForm] = useState({ token: "", zoneName: "" });
   const [ddnsSaving, setDdnsSaving] = useState(false);
 
-  // ── 人機驗證（Cap） ─────────────────────────────────────
-  const [cap, setCap] = useState<{
-    configured: boolean
-    source: string | null
-    endpoint: string | null
-    siteKey: string | null
-    secretHint: string | null
+  // ── 人機驗證（多渠道備援：Cap、Turnstile、hCaptcha） ────
+  interface CaptchaProviderState {
+    provider: "cap" | "turnstile" | "hcaptcha"
+    name: string
     enabled: boolean
-  } | null>(null);
-  const [capForm, setCapForm] = useState({ endpoint: "", siteKey: "", secret: "" });
-  const [capSaving, setCapSaving] = useState(false);
-  const [capToggling, setCapToggling] = useState(false);
+    configured: boolean
+    endpoint: string
+    siteKey: string
+    secretHint: string | null
+    source: string | null
+  }
 
-  async function loadCap() {
+  const [captchaGlobalEnabled, setCaptchaGlobalEnabled] = useState(false);
+  const [captchaProviders, setCaptchaProviders] = useState<CaptchaProviderState[]>([]);
+  const [activeCaptchaTab, setActiveCaptchaTab] = useState<"cap" | "turnstile" | "hcaptcha">("cap");
+  const [providerForms, setProviderForms] = useState<Record<string, { endpoint: string; siteKey: string; secret: string; enabled: boolean }>>({
+    cap: { endpoint: "", siteKey: "", secret: "", enabled: true },
+    turnstile: { endpoint: "", siteKey: "", secret: "", enabled: true },
+    hcaptcha: { endpoint: "", siteKey: "", secret: "", enabled: true },
+  });
+  const [savingProvider, setSavingProvider] = useState<string | null>(null);
+  const [captchaToggling, setCaptchaToggling] = useState(false);
+  const [captchaLoading, setCaptchaLoading] = useState(true);
+
+  const loadCaptcha = useCallback(async () => {
     try {
       const response = await fetch("/api/captcha-settings");
       if (!response.ok) return;
       const payload = await readJson<{
-        configured?: boolean
-        source?: string | null
-        endpoint?: string | null
-        siteKey?: string | null
-        secretHint?: string | null
         enabled?: boolean
+        providers?: CaptchaProviderState[]
       }>(response);
-      setCap({
-        configured: Boolean(payload.configured),
-        source: payload.source || null,
-        endpoint: payload.endpoint || null,
-        siteKey: payload.siteKey || null,
-        secretHint: payload.secretHint || null,
-        enabled: Boolean(payload.enabled),
-      });
-      if (payload.endpoint || payload.siteKey) {
-        setCapForm(previous => ({
-          ...previous,
-          endpoint: payload.endpoint || previous.endpoint,
-          siteKey: payload.siteKey || previous.siteKey,
-        }));
+      setCaptchaGlobalEnabled(Boolean(payload.enabled));
+      if (payload.providers) {
+        setCaptchaProviders(payload.providers);
+        setProviderForms(previous => {
+          const next = { ...previous };
+          for (const item of payload.providers || []) {
+            next[item.provider] = {
+              endpoint: item.endpoint || previous[item.provider]?.endpoint || "",
+              siteKey: item.siteKey || previous[item.provider]?.siteKey || "",
+              secret: "",
+              enabled: Boolean(item.enabled),
+            };
+          }
+          return next;
+        });
       }
     } catch {
       // 讀取失敗不影響其他設定
+    } finally {
+      setCaptchaLoading(false);
     }
-  }
+  }, []);
 
-  async function saveCap() {
-    setCapSaving(true);
+  async function saveProviderConfig(providerId: string) {
+    const form = providerForms[providerId];
+    if (!form) return;
+    setSavingProvider(providerId);
     try {
       const response = await fetch("/api/captcha-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          endpoint: capForm.endpoint.trim(),
-          siteKey: capForm.siteKey.trim(),
-          secret: capForm.secret.trim(),
+          provider: providerId,
+          enabled: form.enabled,
+          endpoint: form.endpoint.trim(),
+          siteKey: form.siteKey.trim(),
+          secret: form.secret.trim(),
         }),
       });
       const payload = await readJson<{ message?: string }>(response);
       if (!response.ok) throw new Error(await readError(response));
-      toast.success(payload.message || "人機驗證設定已儲存");
-      setCapForm(previous => ({ ...previous, secret: "" }));
-      await loadCap();
+      toast.success(payload.message || "設定已儲存");
+      setProviderForms(previous => ({
+        ...previous,
+        [providerId]: { ...previous[providerId], secret: "" },
+      }));
+      await loadCaptcha();
     } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "儲存人機驗證設定失敗");
+      toastDanger(error instanceof Error ? error.message : "儲存設定失敗");
     } finally {
-      setCapSaving(false);
+      setSavingProvider(null);
     }
   }
 
-  async function removeCap() {
-    if (!window.confirm("確定移除人機驗證設定？人機驗證將同時停用。")) return;
-    setCapSaving(true);
+  async function removeProviderConfig(providerId: string) {
+    if (!window.confirm(`確定移除 ${providerId} 設定？`)) return;
+    setSavingProvider(providerId);
     try {
-      const response = await fetch("/api/captcha-settings", { method: "DELETE" });
+      const response = await fetch(`/api/captcha-settings?provider=${encodeURIComponent(providerId)}`, {
+        method: "DELETE",
+      });
       if (!response.ok) throw new Error(await readError(response));
-      toast.success("人機驗證設定已移除，人機驗證已停用");
-      setCapForm({ endpoint: "", siteKey: "", secret: "" });
-      await loadCap();
+      toast.success("設定已移除");
+      await loadCaptcha();
     } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "移除人機驗證設定失敗");
+      toastDanger(error instanceof Error ? error.message : "移除設定失敗");
     } finally {
-      setCapSaving(false);
+      setSavingProvider(null);
     }
   }
 
-  async function toggleCap() {
-    if (!cap || capToggling) return;
-    setCapToggling(true);
+  async function toggleGlobalCaptcha() {
+    if (captchaToggling) return;
+    setCaptchaToggling(true);
     try {
       const response = await fetch("/api/share-settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ captchaEnabled: !cap.enabled }),
+        body: JSON.stringify({ captchaEnabled: !captchaGlobalEnabled }),
       });
       if (!response.ok) throw new Error(await readError(response));
-      toast.success(cap.enabled ? "人機驗證已停用" : "人機驗證已啟用");
-      await loadCap();
+      toast.success(captchaGlobalEnabled ? "分享頁人機驗證已停用" : "分享頁人機驗證已啟用");
+      await loadCaptcha();
     } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "更新人機驗證設定失敗");
+      toastDanger(error instanceof Error ? error.message : "更新人機驗證開關失敗");
     } finally {
-      setCapToggling(false);
+      setCaptchaToggling(false);
     }
   }
 
-  async function loadDdns() {
+  const loadDdns = useCallback(async () => {
     try {
       const response = await fetch("/api/ddns-settings");
       if (!response.ok) return;
@@ -154,7 +172,7 @@ export default function SettingsPage() {
     } catch {
       // 讀取失敗不影響其他設定
     }
-  }
+  }, []);
 
   async function saveDdns() {
     setDdnsSaving(true);
@@ -191,7 +209,7 @@ export default function SettingsPage() {
     }
   }
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const response = await fetch("/api/ssh-keys");
@@ -203,7 +221,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,13 +229,13 @@ export default function SettingsPage() {
       await loadData();
       if (cancelled) return;
       await loadDdns();
-      await loadCap();
+      await loadCaptcha();
     }
     void init();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadData, loadDdns, loadCaptcha]);
 
   async function addKey() {
     setSaving(true);
@@ -404,138 +422,189 @@ export default function SettingsPage() {
         </Card>
       </section>
 
-      {/* 人機驗證（Cap） */}
+      {/* 人機驗證（多渠道備援：Cap、Cloudflare Turnstile、hCaptcha） */}
       <section className="space-y-4">
         <div className="flex items-center gap-2">
           <ShieldCheck aria-hidden size={20} />
-          <h3 className="text-lg font-semibold">人機驗證（Cap）</h3>
-          {cap ? (
-            <Chip variant={cap.enabled ? "primary" : "soft"}>
-              {cap.enabled ? "已啟用" : "未啟用"}
-            </Chip>
-          ) : null}
+          <h3 className="text-lg font-semibold">人機驗證（多渠道備援）</h3>
+          <Chip variant={captchaGlobalEnabled ? "primary" : "soft"}>
+            {captchaGlobalEnabled ? "已啟用" : "未啟用"}
+          </Chip>
         </div>
         <Card>
           <Card.Content className="grid gap-4 p-6">
             <p className="text-sm text-muted">
-              啟用後分享頁的訪客須通過 Cap（工作量證明）才能一鍵換 IP。支援自建 Cap（
-              <a
-                href="https://trycap.dev/zh/guide/"
-                target="_blank"
-                rel="noreferrer"
-                className="text-primary underline hover:opacity-80"
-              >
-                trycap.dev
-              </a>
-              ）實例或託管服務。設定加密存於 D1，優先於環境變量。
+              啟用後分享頁訪客須通過人機驗證才能換 IP。支援同時配置 Cap、Cloudflare Turnstile 與 hCaptcha 作為備援；若訪客端某服務異常，可於彈窗一鍵切換渠道。
             </p>
-            {cap ? (
-              <div className="grid gap-4">
-                <div className="grid gap-3 rounded-lg border bg-surface-subtle p-4 text-sm">
-                  <div className="flex flex-wrap items-center gap-4">
-                    <span>
-                      實例地址（Endpoint）：
-                      {cap.endpoint ? (
-                        <span className="font-mono font-medium">{cap.endpoint}</span>
-                      ) : (
-                        <span className="text-danger">未配置</span>
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <span>
-                      站點公鑰（Site Key）：
-                      {cap.siteKey ? (
-                        <span className="font-mono font-medium">{cap.siteKey}</span>
-                      ) : (
-                        <span className="text-danger">未配置</span>
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <span>
-                      驗證私鑰（Secret Key）：
-                      {cap.secretHint ? (
-                        <>
-                          <span className="font-mono">{cap.secretHint}</span>
-                          <span className="text-muted">（來源：{cap.source === "db" ? "後臺設定" : "環境變量"}）</span>
-                        </>
-                      ) : (
-                        <span className="text-danger">未配置</span>
-                      )}
-                    </span>
-                  </div>
-                </div>
 
-                <div className="grid gap-3">
-                  <div className="grid gap-2">
-                    <label htmlFor="cap-endpoint" className="text-sm font-medium">
-                      實例地址（Endpoint URL）
-                    </label>
-                    <Input
-                      id="cap-endpoint"
-                      type="url"
-                      placeholder="例如：https://cap.example.com"
-                      value={capForm.endpoint}
-                      onChange={event => setCapForm(previous => ({ ...previous, endpoint: event.target.value }))}
-                    />
-                  </div>
-
-                  <div className="grid gap-2">
-                    <label htmlFor="cap-site-key" className="text-sm font-medium">
-                      站點公鑰（Site Key）
-                    </label>
-                    <Input
-                      id="cap-site-key"
-                      placeholder="例如：k_site_..."
-                      value={capForm.siteKey}
-                      onChange={event => setCapForm(previous => ({ ...previous, siteKey: event.target.value }))}
-                    />
-                  </div>
-
-                  <div className="grid gap-2">
-                    <label htmlFor="cap-secret" className="text-sm font-medium">
-                      驗證私鑰（Secret Key）{cap.secretHint ? "（選填，留空即保留目前密鑰）" : ""}
-                    </label>
-                    <Input
-                      id="cap-secret"
-                      type="password"
-                      placeholder={cap.secretHint ? "留空即保留現有密鑰" : "Cap 後台產生的 Secret Key"}
-                      value={capForm.secret}
-                      onChange={event => setCapForm(previous => ({ ...previous, secret: event.target.value }))}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-between border-t pt-3">
-                  {cap.source === "db" ? (
-                    <Button variant="danger" isDisabled={capSaving} onPress={removeCap}>
-                      {capSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : <Trash2 aria-hidden size={16} className="mr-2" />}
-                      移除設定
-                    </Button>
-                  ) : <span />}
-                  <div className="flex gap-2">
-                    <Button
-                      variant="secondary"
-                      isDisabled={capToggling || (!cap.configured && !cap.enabled)}
-                      onPress={toggleCap}
-                    >
-                      {capToggling ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-                      {cap.enabled ? "停用人機驗證" : "啟用人機驗證"}
-                    </Button>
-                    <Button
-                      isDisabled={capSaving || !capForm.endpoint || !capForm.siteKey || (!capForm.secret && !cap.secretHint)}
-                      onPress={saveCap}
-                    >
-                      {capSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-                      儲存設定
-                    </Button>
-                  </div>
-                </div>
+            {/* 全域開關操作列 */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-surface-subtle p-3">
+              <div className="text-sm">
+                <span className="font-medium">分享頁人機驗證總閘門：</span>
+                <span className="text-muted ml-1">
+                  {captchaProviders.filter(p => p.configured && p.enabled).length > 0
+                    ? `已啟用備援渠道（${captchaProviders.filter(p => p.configured && p.enabled).map(p => p.name).join("、")}）`
+                    : "目前無已啟用且配置完成的渠道"}
+                </span>
               </div>
-            ) : (
+              <Button
+                variant={captchaGlobalEnabled ? "secondary" : "primary"}
+                isDisabled={captchaToggling || (!captchaGlobalEnabled && captchaProviders.filter(p => p.configured && p.enabled).length === 0)}
+                onPress={toggleGlobalCaptcha}
+              >
+                {captchaToggling ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
+                {captchaGlobalEnabled ? "停用人機驗證" : "啟用人機驗證"}
+              </Button>
+            </div>
+
+            {/* 渠道切換分頁 */}
+            <div className="flex flex-wrap items-center gap-2 border-b pb-3">
+              {[
+                { id: "cap", label: "Cap (trycap.dev)" },
+                { id: "turnstile", label: "Cloudflare Turnstile" },
+                { id: "hcaptcha", label: "hCaptcha" },
+              ].map(tab => {
+                const current = captchaProviders.find(p => p.provider === tab.id);
+                const isSelected = activeCaptchaTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveCaptchaTab(tab.id as "cap" | "turnstile" | "hcaptcha")}
+                    className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      isSelected
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "bg-surface-subtle hover:bg-surface text-muted hover:text-foreground"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    {current ? (
+                      <span className={`inline-block h-2 w-2 rounded-full ${
+                        current.configured && current.enabled
+                          ? (isSelected ? "bg-white" : "bg-success")
+                          : current.configured
+                          ? (isSelected ? "bg-white/60" : "bg-warning")
+                          : (isSelected ? "bg-white/40" : "bg-danger")
+                      }`} />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 當前選定渠道設定表單 */}
+            {captchaLoading ? (
               <p className="text-sm text-muted">載入中…</p>
-            )}
+            ) : (() => {
+              const current = captchaProviders.find(p => p.provider === activeCaptchaTab);
+              const form = providerForms[activeCaptchaTab] || { endpoint: "", siteKey: "", secret: "", enabled: true };
+              const isSaving = savingProvider === activeCaptchaTab;
+              return (
+                <div className="grid gap-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.enabled}
+                        onChange={e => setProviderForms(prev => ({
+                          ...prev,
+                          [activeCaptchaTab]: { ...prev[activeCaptchaTab], enabled: e.target.checked }
+                        }))}
+                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                      />
+                      <span>啟用 {current?.name || activeCaptchaTab} 渠道</span>
+                    </label>
+
+                    <div className="flex items-center gap-2 text-xs">
+                      <span>狀態：</span>
+                      <Chip variant={current?.configured ? "primary" : "soft"}>
+                        {current?.configured ? (current.enabled ? "已配置且啟用" : "已配置但未啟用") : "未配置"}
+                      </Chip>
+                    </div>
+                  </div>
+
+                  {current?.configured ? (
+                    <div className="grid gap-2 rounded-lg border bg-surface-subtle p-3 text-xs text-muted">
+                      {activeCaptchaTab === "cap" && current.endpoint ? (
+                        <div>實例網址：<span className="font-mono text-foreground">{current.endpoint}</span></div>
+                      ) : null}
+                      <div>Site Key：<span className="font-mono text-foreground">{current.siteKey}</span></div>
+                      <div>Secret Key：<span className="font-mono text-foreground">{current.secretHint}</span> {current.source ? `（來源：${current.source === "db" ? "後臺設定" : "環境變量"}）` : ""}</div>
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-3">
+                    {activeCaptchaTab === "cap" ? (
+                      <div className="grid gap-1.5">
+                        <label className="text-xs font-medium">實例地址（Endpoint URL）</label>
+                        <Input
+                          type="url"
+                          placeholder="例如：https://cap.example.com"
+                          value={form.endpoint}
+                          onChange={e => setProviderForms(prev => ({
+                            ...prev,
+                            cap: { ...prev.cap, endpoint: e.target.value }
+                          }))}
+                        />
+                      </div>
+                    ) : null}
+
+                    <div className="grid gap-1.5">
+                      <label className="text-xs font-medium">站點公鑰（Site Key）</label>
+                      <Input
+                        placeholder={activeCaptchaTab === "turnstile" ? "例如：0x4AAAAAA..." : activeCaptchaTab === "hcaptcha" ? "例如：10000000-ffff-ffff-ffff-000000000001" : "例如：k_site_..."}
+                        value={form.siteKey}
+                        onChange={e => setProviderForms(prev => ({
+                          ...prev,
+                          [activeCaptchaTab]: { ...prev[activeCaptchaTab], siteKey: e.target.value }
+                        }))}
+                      />
+                    </div>
+
+                    <div className="grid gap-1.5">
+                      <label className="text-xs font-medium">
+                        驗證私鑰（Secret Key）{current?.secretHint ? "（選填，留空即保留目前密鑰）" : ""}
+                      </label>
+                      <Input
+                        type="password"
+                        placeholder={current?.secretHint ? "留空即保留現有密鑰" : "Secret Key"}
+                        value={form.secret}
+                        onChange={e => setProviderForms(prev => ({
+                          ...prev,
+                          [activeCaptchaTab]: { ...prev[activeCaptchaTab], secret: e.target.value }
+                        }))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between border-t pt-3">
+                    {current?.source === "db" ? (
+                      <Button
+                        variant="danger"
+                        isDisabled={isSaving}
+                        onPress={() => removeProviderConfig(activeCaptchaTab)}
+                      >
+                        {isSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : <Trash2 aria-hidden size={16} className="mr-2" />}
+                        移除設定
+                      </Button>
+                    ) : <span />}
+
+                    <Button
+                      isDisabled={
+                        isSaving ||
+                        (activeCaptchaTab === "cap" && !form.endpoint) ||
+                        !form.siteKey ||
+                        (!form.secret && !current?.secretHint)
+                      }
+                      onPress={() => saveProviderConfig(activeCaptchaTab)}
+                    >
+                      {isSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
+                      儲存 {current?.name || activeCaptchaTab} 設定
+                    </Button>
+                  </div>
+                </div>
+              );
+            })()}
           </Card.Content>
         </Card>
       </section>

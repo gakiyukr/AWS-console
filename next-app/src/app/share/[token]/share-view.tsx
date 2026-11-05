@@ -108,6 +108,154 @@ const CapWidgetBox = memo(function CapWidgetBox({
   return <div ref={containerRef} className="flex min-h-[56px] items-center justify-center" />;
 });
 
+// Cloudflare Turnstile widget 容器組件
+const TurnstileWidgetBox = memo(function TurnstileWidgetBox({
+  siteKey,
+  onSolve,
+  onReset,
+}: {
+  siteKey: string
+  onSolve: (token: string) => void
+  onReset: () => void
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const widgetIdRef = useRef<string | null>(null);
+  const onSolveRef = useRef(onSolve);
+  const onResetRef = useRef(onReset);
+
+  useEffect(() => {
+    onSolveRef.current = onSolve;
+    onResetRef.current = onReset;
+  }, [onSolve, onReset]);
+
+  useEffect(() => {
+    const host = containerRef.current;
+    if (!host) return;
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+
+    const renderWidget = () => {
+      const turnstile = (window as unknown as { turnstile?: {
+        render: (container: HTMLElement, options: Record<string, unknown>) => string;
+        remove: (id: string) => void;
+      } }).turnstile;
+      if (!turnstile) return false;
+      if (cancelled) return true;
+      host.innerHTML = "";
+      try {
+        widgetIdRef.current = turnstile.render(host, {
+          sitekey: siteKey,
+          callback: (token: string) => onSolveRef.current(token),
+          "error-callback": () => onResetRef.current(),
+          "expired-callback": () => onResetRef.current(),
+        });
+      } catch {
+        // 渲染失敗略過
+      }
+      return true;
+    };
+
+    if (!renderWidget()) {
+      timer = setInterval(() => {
+        if (renderWidget()) {
+          if (timer) clearInterval(timer);
+        }
+      }, 100);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+      if (widgetIdRef.current) {
+        try {
+          const turnstile = (window as unknown as { turnstile?: { remove: (id: string) => void } }).turnstile;
+          turnstile?.remove(widgetIdRef.current);
+        } catch {
+          // 略過
+        }
+        widgetIdRef.current = null;
+      }
+    };
+  }, [siteKey]);
+
+  return <div ref={containerRef} className="flex min-h-[65px] items-center justify-center" />;
+});
+
+// hCaptcha widget 容器組件
+const HcaptchaWidgetBox = memo(function HcaptchaWidgetBox({
+  siteKey,
+  onSolve,
+  onReset,
+}: {
+  siteKey: string
+  onSolve: (token: string) => void
+  onReset: () => void
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const widgetIdRef = useRef<string | null>(null);
+  const onSolveRef = useRef(onSolve);
+  const onResetRef = useRef(onReset);
+
+  useEffect(() => {
+    onSolveRef.current = onSolve;
+    onResetRef.current = onReset;
+  }, [onSolve, onReset]);
+
+  useEffect(() => {
+    const host = containerRef.current;
+    if (!host) return;
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+
+    const renderWidget = () => {
+      const hcaptcha = (window as unknown as { hcaptcha?: {
+        render: (container: HTMLElement, options: Record<string, unknown>) => string;
+        reset: (id?: string) => void;
+      } }).hcaptcha;
+      if (!hcaptcha) return false;
+      if (cancelled) return true;
+      host.innerHTML = "";
+      try {
+        widgetIdRef.current = hcaptcha.render(host, {
+          sitekey: siteKey,
+          callback: (token: string) => onSolveRef.current(token),
+          "error-callback": () => onResetRef.current(),
+          "expired-callback": () => onResetRef.current(),
+        });
+      } catch {
+        // 渲染失敗略過
+      }
+      return true;
+    };
+
+    if (!renderWidget()) {
+      timer = setInterval(() => {
+        if (renderWidget()) {
+          if (timer) clearInterval(timer);
+        }
+      }, 100);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+      if (widgetIdRef.current) {
+        try {
+          const hcaptcha = (window as unknown as { hcaptcha?: { reset: (id?: string) => void } }).hcaptcha;
+          hcaptcha?.reset(widgetIdRef.current);
+        } catch {
+          // 略過
+        }
+        widgetIdRef.current = null;
+      }
+    };
+  }, [siteKey]);
+
+  return <div ref={containerRef} className="flex min-h-[78px] items-center justify-center" />;
+});
+
 // 連結失效（被刪除或停用）時的畫面：與頁面 404 一致的文案
 function LinkGone() {
   return (
@@ -152,8 +300,10 @@ interface ShareMachine {
   cooldownUntil: number | null
 }
 
-interface CaptchaConfig {
-  endpoint: string
+interface CaptchaProviderInfo {
+  provider: "cap" | "turnstile" | "hcaptcha"
+  name: string
+  endpoint?: string
   siteKey: string
 }
 
@@ -171,10 +321,11 @@ export default function ShareView({ token, linkName }: { token: string; linkName
   // 機器 ID → 冷卻結束時間（epoch ms）；以每秒更新時鐘驅動倒數顯示
   const [cooldowns, setCooldowns] = useState<Record<number, number | null>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
-  // 人機驗證：後台開關 + 配置 + widget 產出的一次回傳憑證
+  // 人機驗證：後台開關 + 多渠道配置 + 目前選擇渠道與已解決憑證
   const [captchaEnabled, setCaptchaEnabled] = useState(false);
-  const [captchaConfig, setCaptchaConfig] = useState<CaptchaConfig | null>(null);
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaProviders, setCaptchaProviders] = useState<CaptchaProviderInfo[]>([]);
+  const [activeProviderId, setActiveProviderId] = useState<string>("cap");
+  const [solvedCaptcha, setSolvedCaptcha] = useState<{ provider: string; token: string } | null>(null);
   // 換 IP 確認彈窗選取的目標機器；null 表示彈窗關閉
   const [confirmTarget, setConfirmTarget] = useState<ShareMachine | null>(null);
 
@@ -192,12 +343,17 @@ export default function ShareView({ token, linkName }: { token: string; linkName
     const payload = await readJson<{
       machines?: ShareMachine[];
       captchaEnabled?: boolean;
-      captcha?: CaptchaConfig | null;
+      captchaProviders?: CaptchaProviderInfo[];
     }>(response);
     const rows = payload.machines || [];
     setMachines(rows);
-    setCaptchaEnabled(Boolean(payload.captchaEnabled && payload.captcha));
-    setCaptchaConfig(payload.captcha || null);
+    const providers = payload.captchaProviders || [];
+    const isCaptchaActive = Boolean(payload.captchaEnabled && providers.length > 0);
+    setCaptchaEnabled(isCaptchaActive);
+    setCaptchaProviders(providers);
+    if (providers.length > 0) {
+      setActiveProviderId(current => (providers.some(p => p.provider === current) ? current : providers[0].provider));
+    }
     setCooldowns(Object.fromEntries(rows.map(machine => [machine.id, machine.cooldownUntil])));
   }, [base]);
 
@@ -224,7 +380,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
 
   /** 清空憑證狀態。 */
   const resetWidget = useCallback(() => {
-    setCaptchaToken(null);
+    setSolvedCaptcha(null);
   }, []);
 
   async function refresh() {
@@ -242,7 +398,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
     ]);
   }
 
-  async function rotateMachine(machine: ShareMachine, token?: string | null) {
+  async function rotateMachine(machine: ShareMachine, token?: string | null, provider?: string | null) {
     if (pendingMachineId !== null) return;
     if (captchaEnabled && !token) {
       toastDanger("請先完成人機驗證");
@@ -256,7 +412,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           machineId: machine.id,
-          ...(captchaEnabled && token ? { captchaToken: token } : {}),
+          ...(captchaEnabled && token ? { captchaToken: token, captchaProvider: provider || "cap" } : {}),
         }),
       });
       if (response.status === 429) {
@@ -294,10 +450,18 @@ export default function ShareView({ token, linkName }: { token: string; linkName
     );
   }
 
+  const activeProvider = captchaProviders.find(p => p.provider === activeProviderId) || captchaProviders[0];
+
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
-      {captchaEnabled ? (
+      {captchaEnabled && captchaProviders.some(p => p.provider === "cap") ? (
         <Script src={CAP_WIDGET_SRC} type="module" strategy="afterInteractive" />
+      ) : null}
+      {captchaEnabled && captchaProviders.some(p => p.provider === "turnstile") ? (
+        <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" />
+      ) : null}
+      {captchaEnabled && captchaProviders.some(p => p.provider === "hcaptcha") ? (
+        <Script src="https://js.hcaptcha.com/1/api.js?render=explicit" strategy="afterInteractive" />
       ) : null}
 
       <div className="mb-8 text-center">
@@ -356,7 +520,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
                       className="w-full"
                       isDisabled={!running || busy || cooling}
                       onPress={() => {
-                        setCaptchaToken(null);
+                        setSolvedCaptcha(null);
                         setConfirmTarget(machine);
                       }}
                     >
@@ -419,7 +583,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
         onOpenChange={open => {
           if (!open) {
             setConfirmTarget(null);
-            setCaptchaToken(null);
+            setSolvedCaptcha(null);
           }
         }}
       >
@@ -440,18 +604,65 @@ export default function ShareView({ token, linkName }: { token: string; linkName
                 <p className="text-xs text-muted">
                   更換公網 IP 會將機器關機後重新開機，約需 1–2 分鐘，期間連線將會短暫中斷。
                 </p>
-                {captchaEnabled && captchaConfig ? (
+                {captchaEnabled && captchaProviders.length > 0 ? (
                   <div className="mt-2 rounded-lg border bg-surface-subtle p-4">
-                    <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-foreground">
-                      <ShieldCheck aria-hidden size={16} className="text-primary" />
-                      <span>請先完成下方的人機驗證以啟用更換：</span>
+                    <div className="mb-3 flex items-center justify-between border-b pb-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                        <ShieldCheck aria-hidden size={16} className="text-primary" />
+                        <span>人機驗證</span>
+                      </div>
+                      {captchaProviders.length > 1 ? (
+                        <div className="flex items-center gap-1 text-xs">
+                          {captchaProviders.map((item, index) => {
+                            const isActive = activeProvider?.provider === item.provider;
+                            return (
+                              <span key={item.provider} className="inline-flex items-center">
+                                {index > 0 ? <span className="mx-1.5 text-muted">|</span> : null}
+                                <button
+                                  type="button"
+                                  className={`cursor-pointer transition-colors hover:text-foreground ${
+                                    isActive
+                                      ? "font-bold text-foreground underline underline-offset-4"
+                                      : "text-muted"
+                                  }`}
+                                  onClick={() => {
+                                    if (activeProviderId !== item.provider) {
+                                      setActiveProviderId(item.provider);
+                                      setSolvedCaptcha(null);
+                                    }
+                                  }}
+                                >
+                                  {item.name}
+                                </button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
-                    <CapWidgetBox
-                      endpoint={captchaConfig.endpoint}
-                      siteKey={captchaConfig.siteKey}
-                      onSolve={setCaptchaToken}
-                      onReset={resetWidget}
-                    />
+
+                    <div className="flex min-h-[75px] items-center justify-center">
+                      {activeProvider?.provider === "cap" && activeProvider.endpoint ? (
+                        <CapWidgetBox
+                          endpoint={activeProvider.endpoint}
+                          siteKey={activeProvider.siteKey}
+                          onSolve={token => setSolvedCaptcha({ provider: "cap", token })}
+                          onReset={resetWidget}
+                        />
+                      ) : activeProvider?.provider === "turnstile" ? (
+                        <TurnstileWidgetBox
+                          siteKey={activeProvider.siteKey}
+                          onSolve={token => setSolvedCaptcha({ provider: "turnstile", token })}
+                          onReset={resetWidget}
+                        />
+                      ) : activeProvider?.provider === "hcaptcha" ? (
+                        <HcaptchaWidgetBox
+                          siteKey={activeProvider.siteKey}
+                          onSolve={token => setSolvedCaptcha({ provider: "hcaptcha", token })}
+                          onReset={resetWidget}
+                        />
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
               </Modal.Body>
@@ -460,22 +671,22 @@ export default function ShareView({ token, linkName }: { token: string; linkName
                   variant="secondary"
                   onPress={() => {
                     setConfirmTarget(null);
-                    setCaptchaToken(null);
+                    setSolvedCaptcha(null);
                   }}
                 >
                   取消
                 </Button>
                 <Button
                   variant="primary"
-                  isDisabled={captchaEnabled && !captchaToken}
+                  isDisabled={captchaEnabled && !solvedCaptcha}
                   onPress={() => {
-                    if (captchaEnabled && !captchaToken) return;
+                    if (captchaEnabled && !solvedCaptcha) return;
                     const target = confirmTarget;
-                    const token = captchaToken;
+                    const captcha = solvedCaptcha;
                     setConfirmTarget(null);
-                    setCaptchaToken(null);
+                    setSolvedCaptcha(null);
                     if (target) {
-                      void rotateMachine(target, token);
+                      void rotateMachine(target, captcha?.token, captcha?.provider);
                     }
                   }}
                 >

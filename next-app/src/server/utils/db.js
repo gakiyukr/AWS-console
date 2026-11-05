@@ -353,12 +353,25 @@ function normalizeShareLink(row) {
   return row ? { ...row, enabled: Boolean(row.enabled) } : null;
 }
 
-/** 依主鍵取得單一連結（不含綁定機器）；不存在回 null。 */
+/** 依主鍵取得單一連結與其綁定機器；不存在回 null。 */
 export async function getShareLinkById(db, id) {
-  return normalizeShareLink(await db
+  const row = await db
     .prepare(`SELECT ${SHARE_LINK_COLUMNS} FROM share_links WHERE id = ?1`)
     .bind(id)
-    .first());
+    .first();
+  if (!row) {
+    return null;
+  }
+  const link = normalizeShareLink(row);
+  const { results } = await db
+    .prepare(`SELECT sm.machine_id AS id, COALESCE(NULLIF(m.name, ''), m.instance_id) AS name, m.instance_id AS instanceId, m.region, sm.last_triggered_at AS lastTriggeredAt
+      FROM share_link_machines sm
+      JOIN machines m ON m.id = sm.machine_id
+      WHERE sm.share_link_id = ?1
+      ORDER BY sm.machine_id`)
+    .bind(link.id)
+    .all();
+  return { ...link, machines: results };
 }
 
 /**
@@ -381,7 +394,7 @@ export async function getShareLinkByToken(db, token) {
   }
   const link = normalizeShareLink(row);
   const { results } = await db
-    .prepare(`SELECT sm.machine_id AS id, m.name, m.region, sm.last_triggered_at AS lastTriggeredAt
+    .prepare(`SELECT sm.machine_id AS id, COALESCE(NULLIF(m.name, ''), m.instance_id) AS name, m.instance_id AS instanceId, m.region, sm.last_triggered_at AS lastTriggeredAt
       FROM share_link_machines sm
       JOIN machines m ON m.id = sm.machine_id
       WHERE sm.share_link_id = ?1
@@ -399,7 +412,8 @@ export async function listShareLinks(db) {
     .prepare(`SELECT ${SHARE_LINK_COLUMNS} FROM share_links ORDER BY id`)
     .all();
   const { results: bindings } = await db
-    .prepare(`SELECT share_link_id AS shareLinkId, sm.machine_id AS id, m.name, m.region
+    .prepare(`SELECT share_link_id AS shareLinkId, sm.machine_id AS id,
+      COALESCE(NULLIF(m.name, ''), m.instance_id) AS name, m.instance_id AS instanceId, m.region
       FROM share_link_machines sm
       JOIN machines m ON m.id = sm.machine_id
       ORDER BY sm.machine_id`)
@@ -408,8 +422,27 @@ export async function listShareLinks(db) {
     ...normalizeShareLink(link),
     machines: bindings
       .filter(binding => binding.shareLinkId === link.id)
-      .map(({ id, name, region }) => ({ id, name, region })),
+      .map(({ id, name, region, instanceId }) => ({ id, name, region, instanceId })),
   }));
+}
+
+/** 寫入或更新連結與機器的綁定關聯；保留既有機器的最後觸發時間。 */
+export async function setShareLinkMachines(db, shareLinkId, machineIds) {
+  if (machineIds.length === 0) {
+    await db.prepare("DELETE FROM share_link_machines WHERE share_link_id = ?1").bind(shareLinkId).run();
+    return;
+  }
+  const placeholders = machineIds.map((_, index) => `?${index + 2}`).join(", ");
+  await db
+    .prepare(`DELETE FROM share_link_machines WHERE share_link_id = ?1 AND machine_id NOT IN (${placeholders})`)
+    .bind(shareLinkId, ...machineIds)
+    .run();
+  await db.batch(
+    machineIds.map(machineId =>
+      db.prepare("INSERT OR IGNORE INTO share_link_machines (share_link_id, machine_id) VALUES (?1, ?2)")
+        .bind(shareLinkId, machineId),
+    ),
+  );
 }
 
 /** 寫入連結與機器的綁定關聯（呼叫端已確保機器存在）。 */
@@ -445,7 +478,7 @@ export async function createShareLink(db, { name, token, cooldownMinutes, machin
 
 /**
  * 部分更新連結；僅更新有提供的欄位。回傳更新後的連結，不存在回 null。
- * @param {{ name?: string, cooldownMinutes?: number, enabled?: boolean }} updates
+ * @param {{ name?: string, cooldownMinutes?: number, enabled?: boolean, machineIds?: number[] }} updates
  */
 export async function updateShareLink(db, id, updates) {
   const sets = [];
@@ -462,15 +495,18 @@ export async function updateShareLink(db, id, updates) {
     sets.push("enabled = ?");
     bindings.push(updates.enabled ? 1 : 0);
   }
-  if (sets.length === 0) {
-    return getShareLinkById(db, id);
+  if (sets.length > 0) {
+    sets.push("updated_at = datetime('now')");
+    await db
+      .prepare(`UPDATE share_links SET ${sets.join(", ")} WHERE id = ?`)
+      .bind(...bindings, id)
+      .run();
   }
-  sets.push("updated_at = datetime('now')");
-  const result = await db
-    .prepare(`UPDATE share_links SET ${sets.join(", ")} WHERE id = ?`)
-    .bind(...bindings, id)
-    .run();
-  return (result.meta.changes ?? 0) > 0 ? getShareLinkById(db, id) : null;
+  if (Array.isArray(updates.machineIds)) {
+    await setShareLinkMachines(db, id, updates.machineIds);
+    await db.prepare("UPDATE share_links SET updated_at = datetime('now') WHERE id = ?1").bind(id).run();
+  }
+  return getShareLinkById(db, id);
 }
 
 /** 刪除連結與其綁定關聯；回傳是否確實刪除任一列。 */

@@ -18,6 +18,7 @@ interface ShareLinkMachine {
   id: number
   name: string
   region: string
+  instanceId?: string
 }
 
 interface ShareLinkRow {
@@ -36,6 +37,7 @@ interface ShareLinkRow {
 interface MachineOption {
   id: number
   name: string
+  instanceId?: string
   state: string | null
   platform: string
 }
@@ -59,6 +61,13 @@ export default function ShareLinksPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ name: "", cooldownMinutes: "5" });
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  // 編輯連結
+  const [editTarget, setEditTarget] = useState<ShareLinkRow | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ name: "", cooldownMinutes: "5" });
+  const [editSelectedIds, setEditSelectedIds] = useState<number[]>([]);
+  const [savingEdit, setSavingEdit] = useState(false);
+
   const [deleteTarget, setDeleteTarget] = useState<ShareLinkRow | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -129,6 +138,45 @@ export default function ShareLinksPage() {
       toastDanger(error instanceof Error ? error.message : "建立分享連結失敗");
     } finally {
       setCreating(false);
+    }
+  }
+
+  function openEdit(link: ShareLinkRow) {
+    setEditTarget(link);
+    setEditForm({ name: link.name, cooldownMinutes: String(link.cooldownMinutes) });
+    setEditSelectedIds(link.machines.map(machine => machine.id));
+    setEditOpen(true);
+  }
+
+  function toggleEditSelected(id: number) {
+    setEditSelectedIds(previous =>
+      previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]);
+  }
+
+  async function saveEdit() {
+    if (!editTarget) return;
+    setSavingEdit(true);
+    try {
+      const response = await fetch(`/api/share-links/${editTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editForm.name.trim(),
+          cooldownMinutes: Number(editForm.cooldownMinutes),
+          machineIds: editSelectedIds,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await readError(response));
+      }
+      toast.success("分享連結已更新");
+      setEditOpen(false);
+      setEditTarget(null);
+      await loadData();
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "更新分享連結失敗");
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -249,12 +297,18 @@ export default function ShareLinksPage() {
                   <span className="truncate">/share/{link.token}</span>
                 </button>
                 <div className="grid gap-1 text-xs text-muted">
-                  <span>綁定機器：{link.machines.map(machine => machine.name).join("、") || "—"}</span>
+                  <span>
+                    綁定機器：
+                    {link.machines.map(machine => machine.name || machine.instanceId || "未命名機器").join("、") || "—"}
+                  </span>
                   <span>冷卻時間：{cooldownLabel(link.cooldownMinutes)}</span>
                   <span>建立時間：{formatDatetime(link.createdAt)}</span>
                   <span>最後使用：{formatDatetime(link.lastUsedAt)}</span>
                 </div>
                 <div className="flex justify-end gap-2 border-t pt-3">
+                  <Button variant="secondary" size="sm" onPress={() => openEdit(link)}>
+                    編輯
+                  </Button>
                   <Button variant="secondary" size="sm" onPress={() => toggleEnabled(link)}>
                     {link.enabled ? "停用" : "啟用"}
                   </Button>
@@ -317,7 +371,7 @@ export default function ShareLinksPage() {
                           checked={selectedIds.includes(machine.id)}
                           onChange={() => toggleSelected(machine.id)}
                         />
-                        <span className="min-w-0 flex-1 truncate">{machine.name}</span>
+                        <span className="min-w-0 flex-1 truncate">{machine.name || machine.instanceId || "未命名機器"}</span>
                         <Chip variant="soft" size="sm">
                           {machine.platform === "lightsail" ? "Lightsail" : "EC2"}
                         </Chip>
@@ -332,6 +386,77 @@ export default function ShareLinksPage() {
               <Button isDisabled={creating || !form.name || selectedIds.length === 0} onPress={createLink}>
                 {creating ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : <Link2 aria-hidden size={16} className="mr-2" />}
                 建立
+              </Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
+
+      {/* 編輯連結 */}
+      <Modal.Root isOpen={editOpen} onOpenChange={setEditOpen}>
+        <Modal.Backdrop>
+        <Modal.Container size="md">
+          <Modal.Dialog>
+            <Modal.Header>
+              <Modal.Heading>編輯分享連結</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body className="grid gap-4">
+              <div className="grid gap-2">
+                <label htmlFor="edit-share-link-name" className="text-sm font-medium">連結名稱</label>
+                <Input
+                  id="edit-share-link-name"
+                  placeholder="例如： 換 IP 用"
+                  value={editForm.name}
+                  onChange={event => setEditForm(previous => ({ ...previous, name: event.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="edit-share-link-cooldown" className="text-sm font-medium">冷卻分鐘數</label>
+                <Input
+                  id="edit-share-link-cooldown"
+                  type="number"
+                  min={0}
+                  max={1440}
+                  value={editForm.cooldownMinutes}
+                  onChange={event => setEditForm(previous => ({ ...previous, cooldownMinutes: event.target.value }))}
+                />
+                <p className="text-xs text-muted">
+                  同一台機器更換 IP 後，須等待此分鐘數才能再次由訪客觸發（0 表示不限）。
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <span className="text-sm font-medium">綁定機器</span>
+                {machines.length === 0 ? (
+                  <p className="text-xs text-muted">機器清單是空的，請先到 EC2 或 Lightsail 頁新增機器。</p>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto rounded-md border p-2">
+                    {machines.map(machine => (
+                      <label
+                        key={machine.id}
+                        className="flex h-9 cursor-pointer items-center gap-3 rounded-md px-2 text-sm hover:bg-default"
+                      >
+                        <input
+                          type="checkbox"
+                          className="size-4"
+                          checked={editSelectedIds.includes(machine.id)}
+                          onChange={() => toggleEditSelected(machine.id)}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{machine.name || machine.instanceId || "未命名機器"}</span>
+                        <Chip variant="soft" size="sm">
+                          {machine.platform === "lightsail" ? "Lightsail" : "EC2"}
+                        </Chip>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Modal.Body>
+            <Modal.Footer>
+              <Button variant="secondary" onPress={() => setEditOpen(false)}>取消</Button>
+              <Button isDisabled={savingEdit || !editForm.name.trim() || editSelectedIds.length === 0} onPress={saveEdit}>
+                {savingEdit ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
+                儲存變更
               </Button>
             </Modal.Footer>
           </Modal.Dialog>

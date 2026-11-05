@@ -299,7 +299,12 @@ export default function ShareLinksPage() {
                 <div className="grid gap-1 text-xs text-muted">
                   <span>
                     綁定機器：
-                    {link.machines.map(machine => machine.name || machine.instanceId || "未命名機器").join("、") || "—"}
+                    {link.machines.map(machine => {
+                      if (machine.instanceId && machine.name && machine.name !== machine.instanceId) {
+                        return `${machine.instanceId} (${machine.name})`;
+                      }
+                      return machine.instanceId || machine.name || "未命名機器";
+                    }).join("、") || "—"}
                   </span>
                   <span>冷卻時間：{cooldownLabel(link.cooldownMinutes)}</span>
                   <span>建立時間：{formatDatetime(link.createdAt)}</span>
@@ -363,18 +368,29 @@ export default function ShareLinksPage() {
                     {machines.map(machine => (
                       <label
                         key={machine.id}
-                        className="flex h-9 cursor-pointer items-center gap-3 rounded-md px-2 text-sm hover:bg-default"
+                        className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-default"
                       >
                         <input
                           type="checkbox"
-                          className="size-4"
+                          className="size-4 shrink-0"
                           checked={selectedIds.includes(machine.id)}
                           onChange={() => toggleSelected(machine.id)}
                         />
-                        <span className="min-w-0 flex-1 truncate">{machine.name || machine.instanceId || "未命名機器"}</span>
-                        <Chip variant="soft" size="sm">
-                          {machine.platform === "lightsail" ? "Lightsail" : "EC2"}
-                        </Chip>
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate font-mono font-medium" title={machine.instanceId || machine.name}>
+                              {machine.instanceId || machine.name}
+                            </span>
+                            <Chip variant="soft" size="sm">
+                              {machine.platform === "lightsail" ? "Lightsail" : "EC2"}
+                            </Chip>
+                          </div>
+                          {machine.name && machine.instanceId && machine.name !== machine.instanceId ? (
+                            <span className="truncate text-xs text-muted" title={machine.name}>
+                              {machine.name}
+                            </span>
+                          ) : null}
+                        </div>
                       </label>
                     ))}
                   </div>
@@ -434,18 +450,29 @@ export default function ShareLinksPage() {
                     {machines.map(machine => (
                       <label
                         key={machine.id}
-                        className="flex h-9 cursor-pointer items-center gap-3 rounded-md px-2 text-sm hover:bg-default"
+                        className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-default"
                       >
                         <input
                           type="checkbox"
-                          className="size-4"
+                          className="size-4 shrink-0"
                           checked={editSelectedIds.includes(machine.id)}
                           onChange={() => toggleEditSelected(machine.id)}
                         />
-                        <span className="min-w-0 flex-1 truncate">{machine.name || machine.instanceId || "未命名機器"}</span>
-                        <Chip variant="soft" size="sm">
-                          {machine.platform === "lightsail" ? "Lightsail" : "EC2"}
-                        </Chip>
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate font-mono font-medium" title={machine.instanceId || machine.name}>
+                              {machine.instanceId || machine.name}
+                            </span>
+                            <Chip variant="soft" size="sm">
+                              {machine.platform === "lightsail" ? "Lightsail" : "EC2"}
+                            </Chip>
+                          </div>
+                          {machine.name && machine.instanceId && machine.name !== machine.instanceId ? (
+                            <span className="truncate text-xs text-muted" title={machine.name}>
+                              {machine.name}
+                            </span>
+                          ) : null}
+                        </div>
                       </label>
                     ))}
                   </div>

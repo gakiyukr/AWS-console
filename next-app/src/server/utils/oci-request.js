@@ -8,6 +8,8 @@
 // - 全程僅用 WebCrypto（RSASSA-PKCS1-v1_5 + SHA-256），Cloudflare Workers 相容。
 import { base64ToBytes, bytesToBase64 } from "./bytes.js";
 import { OciApiError, ociErrorFromResponse } from "./oci-error.js";
+import { getEnv } from "@/server/env";
+import { outboundFetch } from "./proxy.js";
 
 export function ociEndpoint(region) {
   return `https://iaas.${region}.oraclecloud.com`;
@@ -200,13 +202,15 @@ export async function ociSignedFetch(options) {
 
   let response;
   try {
-    response = await fetch(url, {
+    const env = options.env || await getEnv().catch(() => null);
+    response = await outboundFetch(url, {
       method,
       headers,
       body: isBodyMethod ? bodyText : undefined,
-    });
-  } catch {
-    throw new OciApiError(`無法連上 OCI API（${url.host}）`, 502);
+    }, env);
+  } catch (err) {
+    if (err instanceof OciApiError) throw err;
+    throw new OciApiError(`無法連上 OCI API（${url.host}）：${err?.message || ""}`, 502);
   }
   if (!response.ok) {
     throw await ociErrorFromResponse(response);

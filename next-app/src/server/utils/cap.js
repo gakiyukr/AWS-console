@@ -2,6 +2,7 @@
 // 訪客端可切換不同驗證器，若任一服務異常可無縫切換備援。
 import { decryptCaptchaSecret, encryptCaptchaSecret } from "./credential-crypto.js";
 import { getAppSetting } from "./db.js";
+import { outboundFetch } from "./proxy.js";
 
 /** app_settings 中分享頁人機驗證總開關的鍵名。 */
 export const SHARE_CAPTCHA_ENABLED_KEY = "share_captcha_enabled";
@@ -217,18 +218,18 @@ export async function verifyCapToken(env, token) {
   };
 
   try {
-    let res = await fetch(primaryUrl, {
+    let res = await outboundFetch(primaryUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
       body: JSON.stringify(payload),
-    });
+    }, env);
 
     if (res.status === 404) {
-      res = await fetch(`${baseUrl}/siteverify`, {
+      res = await outboundFetch(`${baseUrl}/siteverify`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         body: JSON.stringify({ ...payload, sitekey: config.siteKey }),
-      });
+      }, env);
     }
 
     if (!res.ok) {
@@ -262,11 +263,11 @@ export async function verifyTurnstileToken(env, token) {
       response: token.trim(),
     });
 
-    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    const res = await outboundFetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: formData.toString(),
-    });
+    }, env);
 
     if (!res.ok) {
       return { success: false, error: `Cloudflare Turnstile 驗證失敗 (HTTP ${res.status})` };
@@ -300,11 +301,11 @@ export async function verifyHcaptchaToken(env, token) {
       sitekey: config.siteKey,
     });
 
-    const res = await fetch("https://api.hcaptcha.com/siteverify", {
+    const res = await outboundFetch("https://api.hcaptcha.com/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: formData.toString(),
-    });
+    }, env);
 
     if (!res.ok) {
       return { success: false, error: `hCaptcha 驗證失敗 (HTTP ${res.status})` };

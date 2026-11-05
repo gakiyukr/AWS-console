@@ -121,6 +121,8 @@ const PENDING_OIDC_SECRET_AAD = `aws-console-pending-oidc-secret:v${KEY_VERSION}
 const DDNS_TOKEN_AAD = `aws-console-ddns-token:v${KEY_VERSION}`;
 // 人機驗證（Cap）簽章密鑰
 const CAPTCHA_SECRET_AAD = `aws-console-captcha-secret:v${KEY_VERSION}`;
+// API 出口代理密碼
+const PROXY_PASSWORD_AAD = `aws-console-proxy-password:v${KEY_VERSION}`;
 
 async function encryptSecretValue(secret, base64Key, aadDomain, requiredMessage) {
   if (typeof secret !== "string" || !secret) {
@@ -222,5 +224,20 @@ export function decryptCaptchaSecret(record, base64Key) {
     base64Key,
     CAPTCHA_SECRET_AAD,
     "人機驗證密鑰解密失敗，請確認加密主金鑰未被更換",
+  );
+}
+
+/** 將出口代理密碼加密為可寫入 D1 的欄位；回傳值不含明文。 */
+export function encryptProxyPassword(password, base64Key) {
+  return encryptSecretValue(password, base64Key, PROXY_PASSWORD_AAD, "代理密碼為必填");
+}
+
+/** 解密 proxy_settings 的代理密碼；只有伺服器端連線可使用。 */
+export function decryptProxyPassword(record, base64Key) {
+  return decryptSecretValue(
+    record,
+    base64Key,
+    PROXY_PASSWORD_AAD,
+    "代理密碼解密失敗，請確認加密主金鑰未被更換",
   );
 }

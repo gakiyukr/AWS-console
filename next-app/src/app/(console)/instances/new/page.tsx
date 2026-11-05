@@ -13,6 +13,10 @@ import { Card } from "@heroui/react/card";
 import { Chip } from "@/components/chip";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { CustomSelect } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 interface OciAccountOption {
   id: number
@@ -289,7 +293,7 @@ export default function NewInstancePage() {
     }
   }
 
-  const inputClassName = "rounded-md border bg-background px-3 py-2 text-sm";
+
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -337,10 +341,9 @@ export default function NewInstancePage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <label htmlFor="new-name" className="text-sm font-medium">名稱</label>
-                  <input
+                  <Label htmlFor="new-name" className="text-sm font-medium">名稱</Label>
+                  <Input
                     id="new-name"
-                    className={inputClassName}
                     placeholder="my-a1-instance"
                     value={displayName}
                     onChange={event => setDisplayName(event.target.value)}
@@ -393,26 +396,24 @@ export default function NewInstancePage() {
                 {selectedShape?.isFlex ? (
                   <>
                     <div className="grid gap-2">
-                      <label htmlFor="new-ocpus" className="text-sm font-medium">OCPU</label>
-                      <input
+                      <Label htmlFor="new-ocpus" className="text-sm font-medium">OCPU</Label>
+                      <Input
                         id="new-ocpus"
                         type="number"
                         min={1}
                         max={shape === "VM.Standard.A1.Flex" ? 4 : 64}
-                        className={inputClassName}
                         value={ocpus}
                         onChange={event => setOcpus(Number(event.target.value))}
                         disabled={submitting}
                       />
                     </div>
                     <div className="grid gap-2">
-                      <label htmlFor="new-memory" className="text-sm font-medium">記憶體（GB）</label>
-                      <input
+                      <Label htmlFor="new-memory" className="text-sm font-medium">記憶體（GB）</Label>
+                      <Input
                         id="new-memory"
                         type="number"
                         min={1}
                         max={shape === "VM.Standard.A1.Flex" ? 24 : 1024}
-                        className={inputClassName}
                         value={memoryInGBs}
                         onChange={event => setMemoryInGBs(Number(event.target.value))}
                         disabled={submitting}
@@ -474,13 +475,12 @@ export default function NewInstancePage() {
                   ) : null}
                 </div>
                 <div className="grid gap-2">
-                  <label htmlFor="new-boot" className="text-sm font-medium">開機磁碟（GB）</label>
-                  <input
+                  <Label htmlFor="new-boot" className="text-sm font-medium">開機磁碟（GB）</Label>
+                  <Input
                     id="new-boot"
                     type="number"
                     min={minBootGB}
                     max={MAX_BOOT_VOLUME_GB}
-                    className={inputClassName}
                     value={bootVolumeGB}
                     onChange={event => setBootVolumeGB(Number(event.target.value))}
                     disabled={submitting}
@@ -528,22 +528,24 @@ export default function NewInstancePage() {
                   ) : null}
                 </div>
                 {canAssignPublicIp ? (
-                  <label className="flex items-center gap-2 text-sm sm:col-span-2">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4"
+                  <div className="flex items-center justify-between rounded-lg border border-divider p-3 sm:col-span-2">
+                    <div className="space-y-0.5 pr-3">
+                      <Label htmlFor="assign-public-ip-switch" className="text-sm font-medium cursor-pointer">配置臨時公網 IP</Label>
+                      <p className="text-xs text-muted">建立時自動向 OCI 申請臨時公網 IP 位址</p>
+                    </div>
+                    <Switch
+                      id="assign-public-ip-switch"
                       checked={assignPublicIp}
-                      onChange={event => setAssignPublicIp(event.target.checked)}
+                      onCheckedChange={setAssignPublicIp}
                       disabled={submitting}
                     />
-                    配置臨時公網 IP
-                  </label>
+                  </div>
                 ) : null}
                 <div className="grid gap-2 sm:col-span-2">
-                  <label htmlFor="new-ssh" className="text-sm font-medium">SSH 公鑰</label>
-                  <textarea
+                  <Label htmlFor="new-ssh" className="text-sm font-medium">SSH 公鑰</Label>
+                  <Textarea
                     id="new-ssh"
-                    className={`${inputClassName} min-h-24 font-mono text-xs`}
+                    className="min-h-24 font-mono text-xs"
                     spellCheck={false}
                     placeholder={"ssh-ed25519 AAAA… user@host"}
                     value={sshPublicKey}

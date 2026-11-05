@@ -13,6 +13,8 @@ import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
 import { CustomSelect } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface AwsAccountOption {
   id: number
@@ -288,7 +290,7 @@ export default function LightsailPage() {
     void loadSshKeys();
   }
 
-  const selectClassName = "h-9 rounded-md border bg-background px-3 text-sm";
+
 
   return (
     <div className="space-y-6">
@@ -385,10 +387,10 @@ export default function LightsailPage() {
           </div>
 
           <div className="sm:col-span-2">
-            <label className="mb-1.5 block text-sm font-medium">執行個體名稱</label>
-            <input
+            <Label htmlFor="lightsail-name" className="mb-1.5 block text-sm font-medium">執行個體名稱</Label>
+            <Input
+              id="lightsail-name"
               type="text"
-              className={selectClassName}
               placeholder="my-lightsail-instance"
               value={form.instanceName}
               onChange={(e) => setForm(previous => ({ ...previous, instanceName: e.target.value }))}
@@ -396,59 +398,65 @@ export default function LightsailPage() {
             />
           </div>
 
-          <div className="sm:col-span-2">
-            <label className="mb-1.5 block text-sm font-medium">登入憑證類型</label>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  checked={form.credentialType === "ssh_key"}
-                  onChange={() => setForm(previous => ({ ...previous, credentialType: "ssh_key" }))}
-                  disabled={busy}
-                />
-                <span>SSH 公鑰</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  checked={form.credentialType === "password"}
-                  onChange={() => setForm(previous => ({ ...previous, credentialType: "password" }))}
-                  disabled={busy}
-                />
-                <span>密碼</span>
-              </label>
-            </div>
-          </div>
-
-          {form.credentialType === "ssh_key" && (
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-sm font-medium">SSH 公鑰</label>
+          {/* 登入憑證：公鑰取自 D1 公鑰庫，密碼僅存在於本次請求 */}
+          <div className="grid grid-cols-1 gap-4 rounded-md border border-divider p-4 sm:col-span-2 md:grid-cols-2">
+            <div className="grid content-start gap-2">
+              <label htmlFor="lightsail-credential-type" className="text-sm font-medium">登入憑證</label>
               <CustomSelect
-                value={form.sshKeyId}
-                placeholder={loadingKeys ? "載入中..." : "請選擇公鑰"}
-                options={sshKeys.map(key => ({
-                  value: String(key.id),
-                  label: `${key.label} (${sshKeyTypeLabel(key.publicKey)})`,
-                }))}
-                onChange={(val) => setForm(previous => ({ ...previous, sshKeyId: Number(val) || null }))}
-                disabled={loadingKeys || busy}
-              />
-            </div>
-          )}
-
-          {form.credentialType === "password" && (
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-sm font-medium">Root 密碼</label>
-              <input
-                type="password"
-                className={selectClassName}
-                placeholder="至少 8 字元"
-                value={form.rootPassword}
-                onChange={(e) => setForm(previous => ({ ...previous, rootPassword: e.target.value }))}
+                id="lightsail-credential-type"
+                value={form.credentialType}
                 disabled={busy}
+                options={[
+                  { value: "ssh_key", label: "SSH 公鑰" },
+                  { value: "password", label: "自訂密碼" },
+                ]}
+                onChange={val => setForm(previous => ({
+                  ...previous,
+                  credentialType: val as "ssh_key" | "password",
+                }))}
               />
+              <p className="text-xs text-muted">
+                公鑰登入會停用 root 密碼認證；自訂密碼不會被儲存，部署後請自行妥善保管。
+              </p>
             </div>
-          )}
+            {form.credentialType === "ssh_key" ? (
+              <div className="grid content-start gap-2">
+                <label htmlFor="lightsail-ssh-key" className="text-sm font-medium">SSH 公鑰</label>
+                <CustomSelect
+                  id="lightsail-ssh-key"
+                  value={form.sshKeyId}
+                  placeholder={loadingKeys ? "載入中..." : "請選擇公鑰"}
+                  options={sshKeys.map(key => ({
+                    value: key.id,
+                    label: `${key.label} (${sshKeyTypeLabel(key.publicKey)})`,
+                  }))}
+                  onChange={val => setForm(previous => ({
+                    ...previous,
+                    sshKeyId: typeof val === "number" ? val : null,
+                  }))}
+                  disabled={loadingKeys || busy}
+                />
+                <p className="text-xs text-muted">
+                  公鑰由伺服器注入系統授權清單。無可用公鑰？至帳號管理建立。
+                </p>
+              </div>
+            ) : (
+              <div className="grid content-start gap-2">
+                <Label htmlFor="lightsail-root-pwd" className="text-sm font-medium">自訂 root 密碼</Label>
+                <Input
+                  id="lightsail-root-pwd"
+                  type="password"
+                  value={form.rootPassword}
+                  onChange={event => setForm(previous => ({ ...previous, rootPassword: event.target.value }))}
+                  placeholder="至少 8 字元"
+                  disabled={busy}
+                />
+                <p className="text-xs text-muted">
+                  此密碼僅用於本次初始化，伺服器不保存。
+                </p>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="mt-6 flex gap-3">

@@ -12,6 +12,9 @@ import { Input } from "@heroui/react/input";
 import { Modal } from "@heroui/react/modal";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 // ─── AWS 帳號定義 ───────────────────────────────────────────
 
@@ -414,7 +417,7 @@ export default function AccountsPage() {
     }
   }
 
-  const inputClassName = "rounded-md border bg-background px-3 py-2 text-sm";
+
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -660,34 +663,38 @@ export default function AccountsPage() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <label htmlFor="session-token" className="text-sm font-medium">Session Token（選填）</label>
-                    <textarea
+                    <Label htmlFor="session-token" className="text-sm font-medium">Session Token（選填）</Label>
+                    <Textarea
                       id="session-token"
-                      className="min-h-20 rounded-md border bg-background px-3 py-2 text-sm"
+                      className="min-h-20"
                       placeholder={editingAccountId ? "替換憑證時才需填寫" : ""}
                       value={accountForm.sessionToken}
                       onChange={event => setAccountForm(previous => ({ ...previous, sessionToken: event.target.value }))}
                     />
                   </div>
-                  <div className="flex gap-6">
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div className="flex items-center justify-between rounded-lg border border-divider p-3">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="aws-account-enabled" className="text-sm font-medium cursor-pointer">啟用帳號</Label>
+                        <p className="text-xs text-muted">允許此帳號執行所有操作</p>
+                      </div>
+                      <Switch
+                        id="aws-account-enabled"
                         checked={accountForm.enabled}
-                        onChange={event => setAccountForm(previous => ({ ...previous, enabled: event.target.checked }))}
+                        onCheckedChange={checked => setAccountForm(previous => ({ ...previous, enabled: checked }))}
                       />
-                      啟用
-                    </label>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-divider p-3">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="aws-account-default" className="text-sm font-medium cursor-pointer">設為預設</Label>
+                        <p className="text-xs text-muted">作為預設選取的 AWS 帳號</p>
+                      </div>
+                      <Switch
+                        id="aws-account-default"
                         checked={accountForm.isDefault}
-                        onChange={event => setAccountForm(previous => ({ ...previous, isDefault: event.target.checked }))}
+                        onCheckedChange={checked => setAccountForm(previous => ({ ...previous, isDefault: checked }))}
                       />
-                      設為預設
-                    </label>
+                    </div>
                   </div>
                 </div>
               </Modal.Body>
@@ -850,12 +857,12 @@ export default function AccountsPage() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <label htmlFor="oci-private-key" className="text-sm font-medium">
+                    <Label htmlFor="oci-private-key" className="text-sm font-medium">
                       PEM 私鑰{editingOciAccountId ? "（留空表示不替換）" : ""}
-                    </label>
-                    <textarea
+                    </Label>
+                    <Textarea
                       id="oci-private-key"
-                      className={`${inputClassName} min-h-32 font-mono text-xs`}
+                      className="min-h-32 font-mono text-xs"
                       autoComplete="off"
                       spellCheck={false}
                       placeholder={"-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----"}
@@ -863,25 +870,29 @@ export default function AccountsPage() {
                       onChange={event => updateOciField("privateKeyPem", event.target.value)}
                     />
                   </div>
-                  <div className="flex gap-6">
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div className="flex items-center justify-between rounded-lg border border-divider p-3">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="oci-account-enabled" className="text-sm font-medium cursor-pointer">啟用帳號</Label>
+                        <p className="text-xs text-muted">允許此帳號執行所有操作</p>
+                      </div>
+                      <Switch
+                        id="oci-account-enabled"
                         checked={ociAccountForm.enabled}
-                        onChange={event => updateOciField("enabled", event.target.checked)}
+                        onCheckedChange={checked => updateOciField("enabled", checked)}
                       />
-                      啟用
-                    </label>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-divider p-3">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="oci-account-default" className="text-sm font-medium cursor-pointer">設為預設</Label>
+                        <p className="text-xs text-muted">作為預設選取的 OCI 帳號</p>
+                      </div>
+                      <Switch
+                        id="oci-account-default"
                         checked={ociAccountForm.isDefault}
-                        onChange={event => updateOciField("isDefault", event.target.checked)}
+                        onCheckedChange={checked => updateOciField("isDefault", checked)}
                       />
-                      設為預設
-                    </label>
+                    </div>
                   </div>
                 </div>
               </Modal.Body>

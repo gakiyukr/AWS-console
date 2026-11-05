@@ -10,6 +10,9 @@ import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 // 尾段自由文字（email、主機名等）作為備註顯示
 function keyComment(publicKey: string) {
@@ -306,10 +309,10 @@ export default function SettingsPage() {
               />
             </div>
             <div className="grid gap-2">
-              <label htmlFor="ssh-key-value" className="text-sm font-medium">公鑰內容</label>
-              <textarea
+              <Label htmlFor="ssh-key-value" className="text-sm font-medium">公鑰內容</Label>
+              <Textarea
                 id="ssh-key-value"
-                className="min-h-28 rounded-md border bg-background px-3 py-2 font-mono text-xs"
+                className="min-h-28 font-mono text-xs"
                 placeholder="ssh-ed25519 AAAA... user@host"
                 value={keyForm.publicKey}
                 onChange={event => setKeyForm(previous => ({ ...previous, publicKey: event.target.value }))}
@@ -438,23 +441,26 @@ export default function SettingsPage() {
             </p>
 
             {/* 全域開關操作列 */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-surface-subtle p-3">
-              <div className="text-sm">
-                <span className="font-medium">分享頁人機驗證總閘門：</span>
-                <span className="text-muted ml-1">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-divider bg-surface-subtle p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="captcha-global-switch" className="text-sm font-medium cursor-pointer">
+                  分享頁人機驗證總閘門
+                </Label>
+                <p className="text-xs text-muted">
                   {captchaProviders.filter(p => p.configured && p.enabled).length > 0
                     ? `已啟用備援渠道（${captchaProviders.filter(p => p.configured && p.enabled).map(p => p.name).join("、")}）`
                     : "目前無已啟用且配置完成的渠道"}
-                </span>
+                </p>
               </div>
-              <Button
-                variant={captchaGlobalEnabled ? "secondary" : "primary"}
-                isDisabled={captchaToggling || (!captchaGlobalEnabled && captchaProviders.filter(p => p.configured && p.enabled).length === 0)}
-                onPress={toggleGlobalCaptcha}
-              >
-                {captchaToggling ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-                {captchaGlobalEnabled ? "停用人機驗證" : "啟用人機驗證"}
-              </Button>
+              <div className="flex items-center gap-2">
+                {captchaToggling ? <Loader2 aria-hidden size={16} className="animate-spin text-muted" /> : null}
+                <Switch
+                  id="captcha-global-switch"
+                  checked={captchaGlobalEnabled}
+                  disabled={captchaToggling || (!captchaGlobalEnabled && captchaProviders.filter(p => p.configured && p.enabled).length === 0)}
+                  onCheckedChange={() => void toggleGlobalCaptcha()}
+                />
+              </div>
             </div>
 
             {/* 渠道切換分頁 */}
@@ -502,18 +508,19 @@ export default function SettingsPage() {
               return (
                 <div className="grid gap-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-                      <input
-                        type="checkbox"
+                    <div className="flex items-center gap-3">
+                      <Switch
+                        id={`captcha-enable-${activeCaptchaTab}`}
                         checked={form.enabled}
-                        onChange={e => setProviderForms(prev => ({
+                        onCheckedChange={checked => setProviderForms(prev => ({
                           ...prev,
-                          [activeCaptchaTab]: { ...prev[activeCaptchaTab], enabled: e.target.checked }
+                          [activeCaptchaTab]: { ...prev[activeCaptchaTab], enabled: checked }
                         }))}
-                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
                       />
-                      <span>啟用 {current?.name || activeCaptchaTab} 渠道</span>
-                    </label>
+                      <Label htmlFor={`captcha-enable-${activeCaptchaTab}`} className="text-sm font-medium cursor-pointer">
+                        啟用 {current?.name || activeCaptchaTab} 渠道
+                      </Label>
+                    </div>
 
                     <div className="flex items-center gap-2 text-xs">
                       <span>狀態：</span>

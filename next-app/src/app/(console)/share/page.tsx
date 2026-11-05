@@ -13,6 +13,7 @@ import { Card } from "@heroui/react/card";
 import { Input } from "@heroui/react/input";
 import { Modal } from "@heroui/react/modal";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface ShareLinkMachine {
   id: number
@@ -368,13 +369,11 @@ export default function ShareLinksPage() {
                     {machines.map(machine => (
                       <label
                         key={machine.id}
-                        className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-default"
+                        className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors hover:bg-accent/10"
                       >
-                        <input
-                          type="checkbox"
-                          className="size-4 shrink-0"
+                        <Checkbox
                           checked={selectedIds.includes(machine.id)}
-                          onChange={() => toggleSelected(machine.id)}
+                          onCheckedChange={() => toggleSelected(machine.id)}
                         />
                         <div className="flex min-w-0 flex-1 flex-col">
                           <div className="flex items-center gap-2">
@@ -450,13 +449,11 @@ export default function ShareLinksPage() {
                     {machines.map(machine => (
                       <label
                         key={machine.id}
-                        className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-default"
+                        className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors hover:bg-accent/10"
                       >
-                        <input
-                          type="checkbox"
-                          className="size-4 shrink-0"
+                        <Checkbox
                           checked={editSelectedIds.includes(machine.id)}
-                          onChange={() => toggleEditSelected(machine.id)}
+                          onCheckedChange={() => toggleEditSelected(machine.id)}
                         />
                         <div className="flex min-w-0 flex-1 flex-col">
                           <div className="flex items-center gap-2">

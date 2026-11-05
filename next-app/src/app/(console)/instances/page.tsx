@@ -33,6 +33,8 @@ import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { isTransitionState, lifecycleLabel, truncateOcid } from "@/lib/ocid";
 import { CustomSelect } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 interface OciAccountOption {
   id: number
@@ -636,15 +638,17 @@ export default function InstancesPage() {
           <div className="grid gap-2 text-sm">
             <p>對「{pendingPower.instance.displayName || "（未命名）"}」執行{powerDialogTitle(pendingPower.action)}？</p>
             {pendingPower.action === "stop" ? (
-              <label className="flex items-center gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4"
+              <div className="flex items-center justify-between rounded-md border border-danger/40 bg-danger/10 p-3">
+                <div className="space-y-0.5 pr-2">
+                  <Label htmlFor="force-stop-switch" className="text-sm font-medium text-danger cursor-pointer">強制關機（STOP）</Label>
+                  <p className="text-xs text-danger/80">略過作業系統關機程序，有檔案系統損壞風險</p>
+                </div>
+                <Switch
+                  id="force-stop-switch"
                   checked={stopForce}
-                  onChange={event => setStopForce(event.target.checked)}
+                  onCheckedChange={setStopForce}
                 />
-                強制關機（STOP）：略過作業系統關機程序，有檔案系統損壞風險
-              </label>
+              </div>
             ) : null}
             {pendingPower.action === "reboot" ? (
               <p className="text-xs text-muted">將以 SOFTRESET 優雅重啟；強制重啟（RESET）風險較高，未在此提供。</p>
@@ -685,20 +689,21 @@ export default function InstancesPage() {
           <p className="text-danger font-semibold">
             警告：此操作將永久銷毀此執行個體，該主機將進入 TERMINATING 狀態！
           </p>
-          <label className="flex items-start gap-2 rounded-md border border-divider bg-surface-secondary/50 p-3 text-xs cursor-pointer">
-            <input
-              type="checkbox"
-              checked={preserveBootVolume}
-              onChange={event => setPreserveBootVolume(event.target.checked)}
-              className="mt-0.5 rounded border-divider"
-            />
-            <div>
-              <span className="font-medium text-foreground">保留開機磁碟 (preserveBootVolume)</span>
-              <p className="text-muted mt-0.5">
-                勾選後將保留該主機的開機磁碟區（Boot Volume），後續可用於掛載或建立新機器；取消勾選則開機磁碟一併被永久刪除。
+          <div className="flex items-center justify-between rounded-md border border-divider bg-surface-secondary/50 p-3">
+            <div className="space-y-0.5 pr-3">
+              <Label htmlFor="preserve-boot-volume-switch" className="text-sm font-medium text-foreground cursor-pointer">
+                保留開機磁碟 (preserveBootVolume)
+              </Label>
+              <p className="text-muted text-xs">
+                啟用後將保留該主機的開機磁碟區（Boot Volume），後續可用於掛載或建立新機器；關閉則開機磁碟一併被永久刪除。
               </p>
             </div>
-          </label>
+            <Switch
+              id="preserve-boot-volume-switch"
+              checked={preserveBootVolume}
+              onCheckedChange={setPreserveBootVolume}
+            />
+          </div>
         </div>
       </ConfirmDialog>
 
@@ -909,23 +914,24 @@ function OperationWarning({
   return (
     <div className="grid gap-3 text-sm">
       <p>將對子網的預設安全清單全開入站（TCP／UDP／ICMP，v4+v6）與出站；已存在相同規則時自動跳過。</p>
-      <label className="flex items-start gap-2 rounded-md border border-divider bg-surface-secondary/50 p-3 text-xs cursor-pointer">
-        <input
-          type="checkbox"
-          checked={cleanHost}
-          onChange={event => setCleanHost(event.target.checked)}
-          className="mt-0.5 rounded border-divider"
-        />
-        <div>
-          <span className="font-medium text-foreground">同步清理主機層 iptables（OCI Cloud Agent）</span>
-          <p className="text-muted mt-0.5">
+      <div className="flex items-center justify-between rounded-md border border-divider bg-surface-secondary/50 p-3">
+        <div className="space-y-0.5 pr-3">
+          <Label htmlFor="clean-host-switch" className="text-sm font-medium text-foreground cursor-pointer">
+            同步清理主機層 iptables（OCI Cloud Agent）
+          </Label>
+          <p className="text-muted text-xs">
             自動透過 Cloud Agent 註解 Ubuntu／Oracle Linux 出廠預設擋掉 22 以外埠的 REJECT 規則。
           </p>
           {!isInstanceRunning && (
-            <p className="text-warning mt-1">注意：目前主機非開機狀態，將僅處理雲層規則。</p>
+            <p className="text-warning text-xs mt-1">注意：目前主機非開機狀態，將僅處理雲層規則。</p>
           )}
         </div>
-      </label>
+        <Switch
+          id="clean-host-switch"
+          checked={cleanHost}
+          onCheckedChange={setCleanHost}
+        />
+      </div>
     </div>
   );
 }

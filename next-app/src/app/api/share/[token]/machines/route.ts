@@ -5,7 +5,7 @@
 // 失敗時該組列降級為「查詢失敗」，與 /api/machines 的行為一致。
 import { getShareLinkByToken, listMachines } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse } from "@/server/utils/http.js";
-import { isShareCaptchaEnabled } from "@/server/utils/cap.js";
+import { getCapSettings, isShareCaptchaEnabled } from "@/server/utils/cap.js";
 import { mergeMachineStates } from "@/server/utils/power.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
@@ -50,9 +50,17 @@ export async function GET(
     }
   }));
 
+  const captchaEnabled = await isShareCaptchaEnabled(env.DB);
+  const cap = captchaEnabled ? await getCapSettings(env) : null;
+  const isCapReady = Boolean(captchaEnabled && cap?.configured);
+
   return jsonResponse({
     link: { name: link.name, cooldownMinutes: link.cooldownMinutes },
-    captchaEnabled: await isShareCaptchaEnabled(env.DB),
+    captchaEnabled: isCapReady,
+    captcha: isCapReady && cap ? {
+      endpoint: cap.endpoint,
+      siteKey: cap.siteKey,
+    } : null,
     machines: machines.map(machine => {
       const row = rows.get(machine.id) || {};
       const lastTriggeredAt = link.machines.find(bound => bound.id === machine.id)?.lastTriggeredAt ?? null;

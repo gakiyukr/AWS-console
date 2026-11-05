@@ -27,9 +27,9 @@ const STAGE_LABELS: Record<string, string> = {
   completed: "換 IP 完成",
 };
 
-// Cap widget 以 CDN 載入（鎖版本）；內建翻譯不含 zh-TW，
+// Cap widget 以 CDN 載入；內建翻譯不含 zh-TW，
 // 以 11 個 data-cap-i18n-* 屬性明確指定介面文字。
-const CAP_WIDGET_SRC = "https://cdn.jsdelivr.net/npm/cap-widget@0.1.58";
+const CAP_WIDGET_SRC = "https://cdn.jsdelivr.net/npm/cap-widget@latest";
 
 const CAP_WIDGET_I18N: Record<string, string> = {
   "data-cap-i18n-initial-state": "確認你是真人",
@@ -89,6 +89,11 @@ interface ShareMachine {
   cooldownUntil: number | null
 }
 
+interface CaptchaConfig {
+  endpoint: string
+  siteKey: string
+}
+
 interface ProgressEntry {
   time: string
   message: string
@@ -103,8 +108,9 @@ export default function ShareView({ token, linkName }: { token: string; linkName
   // 機器 ID → 冷卻結束時間（epoch ms）；以每秒更新時鐘驅動倒數顯示
   const [cooldowns, setCooldowns] = useState<Record<number, number | null>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
-  // 人機驗證：後台開關 + widget 產出的一次性兌換憑證
+  // 人機驗證：後台開關 + 配置 + widget 產出的一次回傳憑證
   const [captchaEnabled, setCaptchaEnabled] = useState(false);
+  const [captchaConfig, setCaptchaConfig] = useState<CaptchaConfig | null>(null);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const widgetHostRef = useRef<HTMLDivElement | null>(null);
   const widgetRef = useRef<HTMLElement | null>(null);
@@ -120,10 +126,15 @@ export default function ShareView({ token, linkName }: { token: string; linkName
     if (!response.ok) {
       throw new Error(await readError(response));
     }
-    const payload = await readJson<{ machines?: ShareMachine[]; captchaEnabled?: boolean }>(response);
+    const payload = await readJson<{
+      machines?: ShareMachine[];
+      captchaEnabled?: boolean;
+      captcha?: CaptchaConfig | null;
+    }>(response);
     const rows = payload.machines || [];
     setMachines(rows);
-    setCaptchaEnabled(Boolean(payload.captchaEnabled));
+    setCaptchaEnabled(Boolean(payload.captchaEnabled && payload.captcha));
+    setCaptchaConfig(payload.captcha || null);
     setCooldowns(Object.fromEntries(rows.map(machine => [machine.id, machine.cooldownUntil])));
   }, [base]);
 
@@ -150,12 +161,18 @@ export default function ShareView({ token, linkName }: { token: string; linkName
 
   // 掛載 Cap widget：以 imperative 建立自訂元素，屬性與事件監聽一次到位
   useEffect(() => {
-    if (!captchaEnabled) return;
+    if (!captchaEnabled || !captchaConfig?.endpoint || !captchaConfig?.siteKey) return;
     const host = widgetHostRef.current;
-    if (!host || host.firstChild) return;
+    if (!host) return;
+    host.innerHTML = "";
+
     const widget = document.createElement("cap-widget");
-    // challenge/redeem 為全域端點（scope 綁定用途，與連結 token 無關）
-    widget.setAttribute("data-cap-api-endpoint", `${window.location.origin}/api/share/cap/`);
+    const normalizedEndpoint = captchaConfig.endpoint.replace(/\/+$/, "");
+    widget.setAttribute("endpoint", normalizedEndpoint);
+    widget.setAttribute("site-key", captchaConfig.siteKey);
+    widget.setAttribute("sitekey", captchaConfig.siteKey);
+    widget.setAttribute("data-cap-api-endpoint", `${normalizedEndpoint}/${captchaConfig.siteKey}/`);
+
     for (const [attribute, value] of Object.entries(CAP_WIDGET_I18N)) {
       widget.setAttribute(attribute, value);
     }
@@ -171,7 +188,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
       widgetRef.current = null;
       widget.remove();
     };
-  }, [captchaEnabled, base]);
+  }, [captchaEnabled, captchaConfig]);
 
   /** 清空憑證狀態並重置 widget；憑證為一次性，每次更換後都需要重新驗證。 */
   function resetWidget() {

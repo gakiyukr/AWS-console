@@ -38,8 +38,15 @@ export default function SettingsPage() {
   const [ddnsSaving, setDdnsSaving] = useState(false);
 
   // ── 人機驗證（Cap） ─────────────────────────────────────
-  const [cap, setCap] = useState<{ configured: boolean; source: string | null; secretHint: string | null; enabled: boolean } | null>(null);
-  const [capForm, setCapForm] = useState({ secret: "" });
+  const [cap, setCap] = useState<{
+    configured: boolean
+    source: string | null
+    endpoint: string | null
+    siteKey: string | null
+    secretHint: string | null
+    enabled: boolean
+  } | null>(null);
+  const [capForm, setCapForm] = useState({ endpoint: "", siteKey: "", secret: "" });
   const [capSaving, setCapSaving] = useState(false);
   const [capToggling, setCapToggling] = useState(false);
 
@@ -47,13 +54,29 @@ export default function SettingsPage() {
     try {
       const response = await fetch("/api/captcha-settings");
       if (!response.ok) return;
-      const payload = await readJson<{ configured?: boolean; source?: string | null; secretHint?: string | null; enabled?: boolean }>(response);
+      const payload = await readJson<{
+        configured?: boolean
+        source?: string | null
+        endpoint?: string | null
+        siteKey?: string | null
+        secretHint?: string | null
+        enabled?: boolean
+      }>(response);
       setCap({
         configured: Boolean(payload.configured),
         source: payload.source || null,
+        endpoint: payload.endpoint || null,
+        siteKey: payload.siteKey || null,
         secretHint: payload.secretHint || null,
         enabled: Boolean(payload.enabled),
       });
+      if (payload.endpoint || payload.siteKey) {
+        setCapForm(previous => ({
+          ...previous,
+          endpoint: payload.endpoint || previous.endpoint,
+          siteKey: payload.siteKey || previous.siteKey,
+        }));
+      }
     } catch {
       // 讀取失敗不影響其他設定
     }
@@ -65,30 +88,35 @@ export default function SettingsPage() {
       const response = await fetch("/api/captcha-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret: capForm.secret.trim() }),
+        body: JSON.stringify({
+          endpoint: capForm.endpoint.trim(),
+          siteKey: capForm.siteKey.trim(),
+          secret: capForm.secret.trim(),
+        }),
       });
       const payload = await readJson<{ message?: string }>(response);
       if (!response.ok) throw new Error(await readError(response));
-      toast.success(payload.message || "人機驗證密鑰已儲存");
-      setCapForm({ secret: "" });
+      toast.success(payload.message || "人機驗證設定已儲存");
+      setCapForm(previous => ({ ...previous, secret: "" }));
       await loadCap();
     } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "儲存人機驗證密鑰失敗");
+      toastDanger(error instanceof Error ? error.message : "儲存人機驗證設定失敗");
     } finally {
       setCapSaving(false);
     }
   }
 
   async function removeCap() {
-    if (!window.confirm("確定移除人機驗證密鑰？人機驗證將同時停用（環境變量 CAP_SECRET 仍會作為 fallback）。")) return;
+    if (!window.confirm("確定移除人機驗證設定？人機驗證將同時停用。")) return;
     setCapSaving(true);
     try {
       const response = await fetch("/api/captcha-settings", { method: "DELETE" });
       if (!response.ok) throw new Error(await readError(response));
-      toast.success("人機驗證密鑰已移除，人機驗證已停用");
+      toast.success("人機驗證設定已移除，人機驗證已停用");
+      setCapForm({ endpoint: "", siteKey: "", secret: "" });
       await loadCap();
     } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "移除人機驗證密鑰失敗");
+      toastDanger(error instanceof Error ? error.message : "移除人機驗證設定失敗");
     } finally {
       setCapSaving(false);
     }
@@ -390,41 +418,100 @@ export default function SettingsPage() {
         <Card>
           <Card.Content className="grid gap-4 p-6">
             <p className="text-sm text-muted">
-              啟用後分享頁的訪客須通過 Cap（工作量證明）才能一鍵換 IP。密鑰加密存於 D1，
-              優先於環境變量 CAP_SECRET。
+              啟用後分享頁的訪客須通過 Cap（工作量證明）才能一鍵換 IP。支援自建 Cap（
+              <a
+                href="https://trycap.dev/zh/guide/"
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary underline hover:opacity-80"
+              >
+                trycap.dev
+              </a>
+              ）實例或託管服務。設定加密存於 D1，優先於環境變量。
             </p>
             {cap ? (
-              <div className="grid gap-3">
-                <div className="flex flex-wrap items-center gap-4 text-sm">
-                  <span>
-                    密鑰：
-                    {cap.configured ? (
-                      <>
-                        <span className="font-mono">{cap.secretHint}</span>
-                        <span className="text-muted">（來源：{cap.source === "db" ? "後臺設定" : "環境變量"}）</span>
-                      </>
-                    ) : (
-                      <span className="text-danger">未配置</span>
-                    )}
-                  </span>
+              <div className="grid gap-4">
+                <div className="grid gap-3 rounded-lg border bg-surface-subtle p-4 text-sm">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <span>
+                      實例地址（Endpoint）：
+                      {cap.endpoint ? (
+                        <span className="font-mono font-medium">{cap.endpoint}</span>
+                      ) : (
+                        <span className="text-danger">未配置</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <span>
+                      站點公鑰（Site Key）：
+                      {cap.siteKey ? (
+                        <span className="font-mono font-medium">{cap.siteKey}</span>
+                      ) : (
+                        <span className="text-danger">未配置</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <span>
+                      驗證私鑰（Secret Key）：
+                      {cap.secretHint ? (
+                        <>
+                          <span className="font-mono">{cap.secretHint}</span>
+                          <span className="text-muted">（來源：{cap.source === "db" ? "後臺設定" : "環境變量"}）</span>
+                        </>
+                      ) : (
+                        <span className="text-danger">未配置</span>
+                      )}
+                    </span>
+                  </div>
                 </div>
-                <div className="grid gap-2">
-                  <label htmlFor="cap-secret" className="text-sm font-medium">
-                    {cap.configured ? "更換密鑰（選填，留空即不更換）" : "簽章密鑰"}
-                  </label>
-                  <Input
-                    id="cap-secret"
-                    type="password"
-                    placeholder="至少 16 位元組的隨機字串"
-                    value={capForm.secret}
-                    onChange={event => setCapForm(previous => ({ ...previous, secret: event.target.value }))}
-                  />
+
+                <div className="grid gap-3">
+                  <div className="grid gap-2">
+                    <label htmlFor="cap-endpoint" className="text-sm font-medium">
+                      實例地址（Endpoint URL）
+                    </label>
+                    <Input
+                      id="cap-endpoint"
+                      type="url"
+                      placeholder="例如：https://cap.example.com"
+                      value={capForm.endpoint}
+                      onChange={event => setCapForm(previous => ({ ...previous, endpoint: event.target.value }))}
+                    />
+                  </div>
+
+                  <div className="grid gap-2">
+                    <label htmlFor="cap-site-key" className="text-sm font-medium">
+                      站點公鑰（Site Key）
+                    </label>
+                    <Input
+                      id="cap-site-key"
+                      placeholder="例如：k_site_..."
+                      value={capForm.siteKey}
+                      onChange={event => setCapForm(previous => ({ ...previous, siteKey: event.target.value }))}
+                    />
+                  </div>
+
+                  <div className="grid gap-2">
+                    <label htmlFor="cap-secret" className="text-sm font-medium">
+                      驗證私鑰（Secret Key）{cap.secretHint ? "（選填，留空即保留目前密鑰）" : ""}
+                    </label>
+                    <Input
+                      id="cap-secret"
+                      type="password"
+                      placeholder={cap.secretHint ? "留空即保留現有密鑰" : "Cap 後台產生的 Secret Key"}
+                      value={capForm.secret}
+                      onChange={event => setCapForm(previous => ({ ...previous, secret: event.target.value }))}
+                    />
+                  </div>
                 </div>
+
                 <div className="flex justify-between border-t pt-3">
                   {cap.source === "db" ? (
                     <Button variant="danger" isDisabled={capSaving} onPress={removeCap}>
                       {capSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : <Trash2 aria-hidden size={16} className="mr-2" />}
-                      移除密鑰
+                      移除設定
                     </Button>
                   ) : <span />}
                   <div className="flex gap-2">
@@ -436,9 +523,12 @@ export default function SettingsPage() {
                       {capToggling ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
                       {cap.enabled ? "停用人機驗證" : "啟用人機驗證"}
                     </Button>
-                    <Button isDisabled={capSaving || !capForm.secret} onPress={saveCap}>
+                    <Button
+                      isDisabled={capSaving || !capForm.endpoint || !capForm.siteKey || (!capForm.secret && !cap.secretHint)}
+                      onPress={saveCap}
+                    >
                       {capSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-                      儲存密鑰
+                      儲存設定
                     </Button>
                   </div>
                 </div>

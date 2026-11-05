@@ -6,15 +6,13 @@
 import {
   appendOperationLog,
   claimShareRotation,
-  consumeCapToken,
-  getCapTokenExpiry,
   getMachineById,
   getShareLinkByToken,
   getShareLinkMachineBinding,
   touchShareLinkUsed,
 } from "@/server/utils/db.js";
 import { errorResponse, readJsonBody, sseResponse, toHttpError } from "@/server/utils/http.js";
-import { deriveCapTokenKey, isShareCaptchaEnabled } from "@/server/utils/cap.js";
+import { isShareCaptchaEnabled, verifyCapToken } from "@/server/utils/cap.js";
 import { rotateIpFailureMessage, rotatePublicIp } from "@/server/utils/power.js";
 import { syncMachineDdns } from "@/server/utils/ddns.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
@@ -52,15 +50,16 @@ export async function POST(
   const now = Date.now();
   const cooldownMs = link.cooldownMinutes * 60_000;
 
-  // 人機驗證閘門（後台開關開啟時）：先唯讀查驗憑證、搶到冷卻鎖後才
-  // 原子單次消費——429 冷卻中的重試可沿用同一憑證，不會被白白燒掉。
+  // 人機驗證閘門（後台開關開啟時）：伺服端向 Cap 實例驗證訪客提交的 token
   const captchaEnabled = await isShareCaptchaEnabled(env.DB);
-  let capTokenKey: string | null = null;
   if (captchaEnabled) {
-    capTokenKey = await deriveCapTokenKey(body?.captchaToken);
-    const capTokenExpiresAt = capTokenKey ? await getCapTokenExpiry(env.DB, capTokenKey) : null;
-    if (!capTokenKey || !capTokenExpiresAt || capTokenExpiresAt <= now) {
-      return errorResponse(403, "請先完成人機驗證；若已完成，憑證可能已失效，請重新驗證。");
+    const token = typeof body?.captchaToken === "string" ? body.captchaToken.trim() : "";
+    if (!token) {
+      return errorResponse(403, "請先完成人機驗證。");
+    }
+    const verification = await verifyCapToken(env, token);
+    if (!verification.success) {
+      return errorResponse(403, verification.error || "人機驗證未通過或憑證已失效，請重新驗證。");
     }
   }
 
@@ -77,10 +76,6 @@ export async function POST(
 
   let awsEnv;
   try {
-    if (captchaEnabled && capTokenKey && !await consumeCapToken(env.DB, capTokenKey, now)) {
-      // 併發下憑證已被其他請求搶先消費
-      return errorResponse(403, "人機驗證已使用，請重新驗證。");
-    }
     ({ awsEnv } = await resolveAwsAccount(env, machine.awsAccountId));
   } catch (error) {
     const httpError = toHttpError(error);

@@ -7,12 +7,13 @@
 // 後台啟用人機驗證時，需先通過 Cap widget（PoW）才能觸發換 IP；
 // 兌換憑證為一次性，每次更換後 widget 會重置待重新驗證。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, RefreshCw, Zap } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Zap } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import Script from "next/script";
 import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
+import { Modal } from "@heroui/react/modal";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
 
@@ -44,6 +45,49 @@ const CAP_WIDGET_I18N: Record<string, string> = {
   "data-cap-i18n-required-label": "請先驗證你是真人",
   "data-cap-i18n-error-aria-label": "發生錯誤，請重試",
 };
+
+// Cap widget 容器組件：掛載自訂元素，屬性與事件監聽一次到位
+function CapWidgetBox({
+  config,
+  onSolve,
+  onReset,
+}: {
+  config: CaptchaConfig
+  onSolve: (token: string) => void
+  onReset: () => void
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const host = containerRef.current;
+    if (!host) return;
+    host.innerHTML = "";
+
+    const widget = document.createElement("cap-widget");
+    const normalizedEndpoint = config.endpoint.replace(/\/+$/, "");
+    widget.setAttribute("endpoint", normalizedEndpoint);
+    widget.setAttribute("site-key", config.siteKey);
+    widget.setAttribute("sitekey", config.siteKey);
+    widget.setAttribute("data-cap-api-endpoint", `${normalizedEndpoint}/${config.siteKey}/`);
+
+    for (const [attribute, value] of Object.entries(CAP_WIDGET_I18N)) {
+      widget.setAttribute(attribute, value);
+    }
+    widget.addEventListener("solve", event => {
+      const token = (event as CustomEvent<{ token?: string }>).detail?.token;
+      if (token) onSolve(token);
+    });
+    widget.addEventListener("reset", onReset);
+    widget.addEventListener("error", onReset);
+    host.appendChild(widget);
+
+    return () => {
+      widget.remove();
+    };
+  }, [config, onSolve, onReset]);
+
+  return <div ref={containerRef} className="flex min-h-[56px] items-center justify-center" />;
+}
 
 // 連結失效（被刪除或停用）時的畫面：與頁面 404 一致的文案
 function LinkGone() {
@@ -112,8 +156,8 @@ export default function ShareView({ token, linkName }: { token: string; linkName
   const [captchaEnabled, setCaptchaEnabled] = useState(false);
   const [captchaConfig, setCaptchaConfig] = useState<CaptchaConfig | null>(null);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
-  const widgetHostRef = useRef<HTMLDivElement | null>(null);
-  const widgetRef = useRef<HTMLElement | null>(null);
+  // 換 IP 確認彈窗選取的目標機器；null 表示彈窗關閉
+  const [confirmTarget, setConfirmTarget] = useState<ShareMachine | null>(null);
 
   const base = `/api/share/${encodeURIComponent(token)}`;
 
@@ -159,42 +203,9 @@ export default function ShareView({ token, linkName }: { token: string; linkName
     return () => clearInterval(timer);
   }, []);
 
-  // 掛載 Cap widget：以 imperative 建立自訂元素，屬性與事件監聽一次到位
-  useEffect(() => {
-    if (!captchaEnabled || !captchaConfig?.endpoint || !captchaConfig?.siteKey) return;
-    const host = widgetHostRef.current;
-    if (!host) return;
-    host.innerHTML = "";
-
-    const widget = document.createElement("cap-widget");
-    const normalizedEndpoint = captchaConfig.endpoint.replace(/\/+$/, "");
-    widget.setAttribute("endpoint", normalizedEndpoint);
-    widget.setAttribute("site-key", captchaConfig.siteKey);
-    widget.setAttribute("sitekey", captchaConfig.siteKey);
-    widget.setAttribute("data-cap-api-endpoint", `${normalizedEndpoint}/${captchaConfig.siteKey}/`);
-
-    for (const [attribute, value] of Object.entries(CAP_WIDGET_I18N)) {
-      widget.setAttribute(attribute, value);
-    }
-    widget.addEventListener("solve", event => {
-      const token = (event as CustomEvent<{ token?: string }>).detail?.token;
-      if (token) setCaptchaToken(token);
-    });
-    widget.addEventListener("reset", () => setCaptchaToken(null));
-    widget.addEventListener("error", () => setCaptchaToken(null));
-    host.appendChild(widget);
-    widgetRef.current = widget;
-    return () => {
-      widgetRef.current = null;
-      widget.remove();
-    };
-  }, [captchaEnabled, captchaConfig]);
-
-  /** 清空憑證狀態並重置 widget；憑證為一次性，每次更換後都需要重新驗證。 */
+  /** 清空憑證狀態。 */
   function resetWidget() {
     setCaptchaToken(null);
-    const widget = widgetRef.current as (HTMLElement & { reset?: () => void }) | null;
-    widget?.reset?.();
   }
 
   async function refresh() {
@@ -212,9 +223,9 @@ export default function ShareView({ token, linkName }: { token: string; linkName
     ]);
   }
 
-  async function rotateMachine(machine: ShareMachine) {
+  async function rotateMachine(machine: ShareMachine, token?: string | null) {
     if (pendingMachineId !== null) return;
-    if (captchaEnabled && !captchaToken) {
+    if (captchaEnabled && !token) {
       toastDanger("請先完成人機驗證");
       return;
     }
@@ -226,7 +237,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           machineId: machine.id,
-          ...(captchaEnabled && captchaToken ? { captchaToken } : {}),
+          ...(captchaEnabled && token ? { captchaToken: token } : {}),
         }),
       });
       if (response.status === 429) {
@@ -277,16 +288,6 @@ export default function ShareView({ token, linkName }: { token: string; linkName
         </p>
       </div>
 
-      {captchaEnabled ? (
-        <Card className="mb-6">
-          <Card.Content className="grid grid-cols-1 gap-3 p-6">
-            <h3 className="text-sm font-semibold">人機驗證</h3>
-            <p className="text-xs text-muted">更換 IP 前需完成驗證；每次更換都需重新驗證一次。</p>
-            <div ref={widgetHostRef} className="flex justify-center" />
-          </Card.Content>
-        </Card>
-      ) : null}
-
       {loading ? (
         <div className="flex items-center justify-center py-16 text-muted">
           <Loader2 aria-hidden size={20} className="mr-2 animate-spin" />
@@ -302,7 +303,6 @@ export default function ShareView({ token, linkName }: { token: string; linkName
             const cooling = remainingMs > 0;
             const running = machine.state === "running";
             const busy = pendingMachineId !== null;
-            const captchaPending = captchaEnabled && !captchaToken;
             return (
               <Card key={machine.id} className="min-w-0">
                 <Card.Content className="grid grid-cols-1 gap-3 p-6">
@@ -335,8 +335,11 @@ export default function ShareView({ token, linkName }: { token: string; linkName
                   <div className="border-t pt-3">
                     <Button
                       className="w-full"
-                      isDisabled={!running || busy || cooling || captchaPending}
-                      onPress={() => rotateMachine(machine)}
+                      isDisabled={!running || busy || cooling}
+                      onPress={() => {
+                        setCaptchaToken(null);
+                        setConfirmTarget(machine);
+                      }}
                     >
                       {pendingMachineId === machine.id ? (
                         <>
@@ -352,9 +355,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
                         </>
                       )}
                     </Button>
-                    {captchaPending ? (
-                      <p className="mt-2 text-center text-xs text-muted">請先完成上方的人機驗證</p>
-                    ) : !running && !cooling ? (
+                    {!running && !cooling ? (
                       <p className="mt-2 text-center text-xs text-muted">
                         機器須處於運行中狀態才能更換 IP
                       </p>
@@ -392,6 +393,80 @@ export default function ShareView({ token, linkName }: { token: string; linkName
           </Card.Content>
         </Card>
       ) : null}
+
+      {/* 換 IP 確認與人機驗證彈窗 */}
+      <Modal.Root
+        isOpen={confirmTarget !== null}
+        onOpenChange={open => {
+          if (!open) {
+            setConfirmTarget(null);
+            setCaptchaToken(null);
+          }
+        }}
+      >
+        <Modal.Backdrop>
+          <Modal.Container size="md" placement="center">
+            <Modal.Dialog>
+              <Modal.Header>
+                <Modal.Heading>確認更換公網 IP</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body className="grid gap-3">
+                <p className="text-sm">
+                  確定要為機器{" "}
+                  <span className="font-semibold text-foreground">
+                    {confirmTarget?.name}
+                  </span>{" "}
+                  更換公網 IP 嗎？
+                </p>
+                <p className="text-xs text-muted">
+                  更換公網 IP 會將機器關機後重新開機，約需 1–2 分鐘，期間連線將會短暫中斷。
+                </p>
+                {captchaEnabled && captchaConfig ? (
+                  <div className="mt-2 rounded-lg border bg-surface-subtle p-4">
+                    <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-foreground">
+                      <ShieldCheck aria-hidden size={16} className="text-primary" />
+                      <span>請先完成下方的人機驗證以啟用更換：</span>
+                    </div>
+                    <CapWidgetBox
+                      config={captchaConfig}
+                      onSolve={setCaptchaToken}
+                      onReset={() => setCaptchaToken(null)}
+                    />
+                  </div>
+                ) : null}
+              </Modal.Body>
+              <Modal.Footer>
+                <Button
+                  variant="secondary"
+                  onPress={() => {
+                    setConfirmTarget(null);
+                    setCaptchaToken(null);
+                  }}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  isDisabled={captchaEnabled && !captchaToken}
+                  onPress={() => {
+                    if (captchaEnabled && !captchaToken) return;
+                    const target = confirmTarget;
+                    const token = captchaToken;
+                    setConfirmTarget(null);
+                    setCaptchaToken(null);
+                    if (target) {
+                      void rotateMachine(target, token);
+                    }
+                  }}
+                >
+                  <Zap aria-hidden size={16} className="mr-2" />
+                  確定更換
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
     </main>
   );
 }

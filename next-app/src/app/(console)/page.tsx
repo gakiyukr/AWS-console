@@ -7,6 +7,7 @@ import Link from "next/link";
 import {
   ArrowRight,
   CheckCircle2,
+  Copy,
   Cpu,
   KeyRound,
   Loader2,
@@ -21,17 +22,31 @@ import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Chip } from "@/components/chip";
 import { readJson } from "@/lib/api-client";
+import { copyToClipboard, stateBadgeVariant, stateLabel } from "@/lib/machine-display";
 
 interface Machine {
   id: number
-  platform?: "ec2" | "lightsail"
+  region?: string
+  instanceId?: string
+  name?: string
+  platform?: "ec2" | "lightsail" | string
   isWavelength?: boolean
-  state?: string
+  state?: string | null
+  publicIpAddress?: string | null
+  publicDnsName?: string | null
+  ipv6Address?: string | null
+  awsAccountName?: string | null
 }
 
 interface OciInstance {
   id: string
+  displayName?: string
+  alias?: string | null
+  notes?: string | null
   lifecycleState: string
+  shape?: string
+  publicIp?: string | null
+  ipv6Address?: string | null
 }
 
 interface ReservedIp {
@@ -53,6 +68,10 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // 機器列表明細
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [ociInstances, setOciInstances] = useState<OciInstance[]>([]);
+
   // AWS 統計
   const [ec2Count, setEc2Count] = useState(0);
   const [ec2Running, setEc2Running] = useState(0);
@@ -73,83 +92,102 @@ export default function DashboardPage() {
   const [recentLogs, setRecentLogs] = useState<LogEntry[]>([]);
 
   async function loadDashboardData() {
-    // 1. AWS 機器資料
-    try {
-      const res = await fetch("/api/machines");
-      if (res.ok) {
-        const data = await readJson<{ machines?: Machine[] }>(res);
-        const machines = data.machines || [];
-        const ec2s = machines.filter(m => (m.platform || "ec2") === "ec2");
-        const ls = machines.filter(m => m.platform === "lightsail");
+    await Promise.allSettled([
+      // 1. AWS 機器資料 (EC2 / Lightsail)
+      (async () => {
+        try {
+          const res = await fetch("/api/machines");
+          if (res.ok) {
+            const raw = await readJson<Machine[] | { machines?: Machine[] }>(res);
+            const list = Array.isArray(raw) ? raw : (raw?.machines || []);
+            setMachines(list);
 
-        setEc2Count(ec2s.length);
-        setEc2Running(ec2s.filter(m => m.state === "running").length);
-        setEc2Stopped(ec2s.filter(m => m.state === "stopped").length);
-        setWavelengthCount(ec2s.filter(m => m.isWavelength).length);
+            const ec2s = list.filter(m => (m.platform || "ec2") === "ec2");
+            const ls = list.filter(m => m.platform === "lightsail");
 
-        setLightsailCount(ls.length);
-        setLightsailRunning(ls.filter(m => m.state === "running").length);
-      }
-    } catch {
-      // 忽略單項載入錯誤
-    }
+            setEc2Count(ec2s.length);
+            setEc2Running(ec2s.filter(m => m.state === "running").length);
+            setEc2Stopped(ec2s.filter(m => m.state === "stopped").length);
+            setWavelengthCount(ec2s.filter(m => Boolean(m.isWavelength)).length);
 
-    // 2. OCI 執行個體資料
-    try {
-      const res = await fetch("/api/instances");
-      if (res.ok) {
-        const data = await readJson<{ instances?: OciInstance[] }>(res);
-        const instances = data.instances || [];
-        setOciCount(instances.length);
-        setOciRunning(instances.filter(i => i.lifecycleState === "RUNNING").length);
-        setOciError(null);
-      } else {
-        const errorData = await res.json().catch(() => ({ error: "" })) as { error?: string };
-        setOciError(errorData?.error || "尚未設定可用的 OCI 帳號");
-      }
-    } catch {
-      setOciError("無法載入 OCI 資料");
-    }
+            setLightsailCount(ls.length);
+            setLightsailRunning(ls.filter(m => m.state === "running").length);
+          }
+        } catch (e) {
+          console.error("載入 AWS 機器失敗", e);
+        }
+      })(),
 
-    // 3. OCI 保留 IP
-    try {
-      const res = await fetch("/api/reserved-ips");
-      if (res.ok) {
-        const data = await readJson<{ reservedIps?: ReservedIp[] }>(res);
-        setReservedIpCount((data.reservedIps || []).length);
-      }
-    } catch {
-      // 忽略單項載入錯誤
-    }
+      // 2. OCI 執行個體資料
+      (async () => {
+        try {
+          const res = await fetch("/api/instances");
+          if (res.ok) {
+            const data = await readJson<{ instances?: OciInstance[] } | OciInstance[]>(res);
+            const list = Array.isArray(data) ? data : (data?.instances || []);
+            setOciInstances(list);
+            setOciCount(list.length);
+            setOciRunning(list.filter(i => i.lifecycleState === "RUNNING").length);
+            setOciError(null);
+          } else {
+            const errorData = await res.json().catch(() => ({ error: "" })) as { error?: string };
+            setOciError(errorData?.error || "尚未設定可用的 OCI 帳號");
+          }
+        } catch {
+          setOciError("無法載入 OCI 資料");
+        }
+      })(),
 
-    // 4. 帳號統計
-    try {
-      const [awsRes, ociRes] = await Promise.all([
-        fetch("/api/accounts"),
-        fetch("/api/oci-accounts"),
-      ]);
-      if (awsRes.ok) {
-        const data = await readJson<{ accounts?: unknown[] }>(awsRes);
-        setAwsAccountCount((data.accounts || []).length);
-      }
-      if (ociRes.ok) {
-        const data = await readJson<{ accounts?: unknown[] }>(ociRes);
-        setOciAccountCount((data.accounts || []).length);
-      }
-    } catch {
-      // 忽略
-    }
+      // 3. OCI 保留 IP
+      (async () => {
+        try {
+          const res = await fetch("/api/reserved-ips");
+          if (res.ok) {
+            const data = await readJson<{ reservedIps?: ReservedIp[] } | ReservedIp[]>(res);
+            const ips = Array.isArray(data) ? data : (data?.reservedIps || []);
+            setReservedIpCount(ips.length);
+          }
+        } catch {
+          // 忽略單項載入錯誤
+        }
+      })(),
 
-    // 5. 最新操作日誌
-    try {
-      const res = await fetch("/api/logs?limit=5");
-      if (res.ok) {
-        const data = await readJson<{ logs?: LogEntry[] }>(res);
-        setRecentLogs(data.logs || []);
-      }
-    } catch {
-      // 忽略
-    }
+      // 4. 帳號統計
+      (async () => {
+        try {
+          const [awsRes, ociRes] = await Promise.all([
+            fetch("/api/accounts"),
+            fetch("/api/oci-accounts"),
+          ]);
+          if (awsRes.ok) {
+            const data = await readJson<{ accounts?: unknown[] } | unknown[]>(awsRes);
+            const accs = Array.isArray(data) ? data : (data?.accounts || []);
+            setAwsAccountCount(accs.length);
+          }
+          if (ociRes.ok) {
+            const data = await readJson<{ accounts?: unknown[] } | unknown[]>(ociRes);
+            const accs = Array.isArray(data) ? data : (data?.accounts || []);
+            setOciAccountCount(accs.length);
+          }
+        } catch {
+          // 忽略
+        }
+      })(),
+
+      // 5. 最新操作日誌
+      (async () => {
+        try {
+          const res = await fetch("/api/logs?limit=5");
+          if (res.ok) {
+            const data = await readJson<{ logs?: LogEntry[] } | LogEntry[]>(res);
+            const logs = Array.isArray(data) ? data : (data?.logs || []);
+            setRecentLogs(logs);
+          }
+        } catch {
+          // 忽略
+        }
+      })(),
+    ]);
   }
 
   useEffect(() => {
@@ -169,6 +207,37 @@ export default function DashboardPage() {
     await loadDashboardData();
     setRefreshing(false);
   }
+
+  const allActiveMachines = [
+    ...machines.map(m => ({
+      key: `aws-${m.id}`,
+      cloud: (m.platform === "lightsail" ? "AWS Lightsail" : "AWS EC2") as string,
+      cloudColor: m.platform === "lightsail" ? "text-blue-500" : "text-amber-500",
+      id: m.instanceId || `machine-${m.id}`,
+      name: m.name || m.instanceId,
+      region: m.region || "—",
+      ip: m.publicIpAddress || "—",
+      isWl: Boolean(m.isWavelength),
+      state: m.state || "未知",
+      variant: stateBadgeVariant(m.state || null),
+      label: stateLabel(m.state || null),
+      link: m.platform === "lightsail" ? "/lightsail" : "/ec2",
+    })),
+    ...ociInstances.map(i => ({
+      key: `oci-${i.id}`,
+      cloud: "Oracle Cloud",
+      cloudColor: "text-red-500",
+      id: i.id,
+      name: i.displayName || i.alias || i.id,
+      region: i.shape || "OCI 運算",
+      ip: i.publicIp || "—",
+      isWl: false,
+      state: i.lifecycleState,
+      variant: (i.lifecycleState === "RUNNING" ? "primary" : "secondary") as "primary" | "secondary" | "soft",
+      label: i.lifecycleState === "RUNNING" ? "執行中" : i.lifecycleState,
+      link: "/instances",
+    })),
+  ];
 
   return (
     <div className="flex w-full flex-col gap-8">
@@ -331,6 +400,84 @@ export default function DashboardPage() {
               </Card.Content>
             </Card>
           </div>
+
+          {/* 快速執行個體總覽 */}
+          {allActiveMachines.length > 0 && (
+            <Card>
+              <Card.Content className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-base font-semibold">受管執行個體快速清單</h3>
+                    <p className="text-xs text-muted">跨雲平台已納管與運行中的運算資源</p>
+                  </div>
+                  <Chip variant="soft" size="sm">{allActiveMachines.length} 台資源</Chip>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-divider text-muted">
+                        <th className="py-2.5 pr-4 font-medium">平台</th>
+                        <th className="py-2.5 pr-4 font-medium">執行個體名稱 / ID</th>
+                        <th className="py-2.5 pr-4 font-medium">地區 / 規格</th>
+                        <th className="py-2.5 pr-4 font-medium">公網 IP</th>
+                        <th className="py-2.5 pr-4 font-medium">狀態</th>
+                        <th className="py-2.5 text-right font-medium">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-divider">
+                      {allActiveMachines.map(m => (
+                        <tr key={m.key} className="hover:bg-default/40 transition-colors">
+                          <td className="py-3 pr-4 font-medium">
+                            <span className={m.cloudColor}>{m.cloud}</span>
+                          </td>
+                          <td className="py-3 pr-4">
+                            <div className="flex items-center gap-1.5 font-medium text-foreground">
+                              <span>{m.name}</span>
+                              {m.isWl && (
+                                <Chip variant="secondary" size="sm">WL</Chip>
+                              )}
+                            </div>
+                            <div className="font-mono text-[11px] text-muted truncate max-w-[200px]">
+                              {m.id}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4 text-muted">{m.region}</td>
+                          <td className="py-3 pr-4">
+                            {m.ip && m.ip !== "—" ? (
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(m.ip)}
+                                className="group flex items-center gap-1 font-mono text-foreground hover:text-accent transition-colors"
+                                title="點擊複製 IP"
+                              >
+                                <span>{m.ip}</span>
+                                <Copy size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </button>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )}
+                          </td>
+                          <td className="py-3 pr-4">
+                            <Chip variant={m.variant} size="sm">
+                              {m.label}
+                            </Chip>
+                          </td>
+                          <td className="py-3 text-right">
+                            <Link
+                              href={m.link}
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted hover:text-foreground hover:bg-default transition-colors"
+                            >
+                              管理 <ArrowRight size={12} />
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card.Content>
+            </Card>
+          )}
 
           {/* 次要資訊與快捷入口 */}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

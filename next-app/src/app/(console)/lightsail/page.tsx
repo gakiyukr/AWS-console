@@ -15,6 +15,7 @@ import { ConfirmDialog, MachineName } from "@/components/confirm-dialog";
 import { MachineTable } from "@/components/machine-table";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { useMachines } from "@/lib/use-machines";
+import { CustomSelect } from "@/components/ui/select";
 
 interface AwsAccountOption {
   id: number
@@ -195,64 +196,56 @@ export default function LightsailOverviewPage() {
               <Modal.Body className="grid gap-4">
                 <div className="grid gap-2">
                   <label htmlFor="ls-add-account" className="text-sm font-medium">AWS 帳號</label>
-                  <select
+                  <CustomSelect
                     id="ls-add-account"
-                    className="h-9 rounded-md border bg-background px-3 text-sm"
-                    value={addForm.awsAccountId ?? ""}
-                    onChange={event => {
-                      const accountId = Number(event.target.value);
+                    value={addForm.awsAccountId}
+                    placeholder="請選擇 AWS 帳號"
+                    options={accounts.map(account => ({
+                      value: String(account.id),
+                      label: `${account.name}${account.isDefault ? "（預設）" : ""}`,
+                    }))}
+                    onChange={val => {
+                      const accountId = Number(val);
                       setAddForm({ ...EMPTY_ADD_FORM, awsAccountId: accountId });
                       setInstances([]);
                       void loadRegions(accountId);
                     }}
-                  >
-                    {accounts.map(account => (
-                      <option key={account.id} value={account.id}>{account.name}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 <div className="grid gap-2">
                   <label htmlFor="ls-add-region" className="text-sm font-medium">地區</label>
-                  <select
+                  <CustomSelect
                     id="ls-add-region"
-                    className="h-9 rounded-md border bg-background px-3 text-sm"
                     value={addForm.region}
-                    disabled={loadingRegions}
-                    onChange={event => {
-                      const region = event.target.value;
+                    placeholder={loadingRegions ? "載入地區中..." : "請選擇地區"}
+                    disabled={loadingRegions || !addForm.awsAccountId}
+                    options={regions.map(region => ({ value: region, label: region }))}
+                    onChange={region => {
                       setAddForm(previous => ({ ...previous, region, instanceId: "" }));
                       if (addForm.awsAccountId) void loadInstances(addForm.awsAccountId, region);
                     }}
-                  >
-                    <option value="">請選擇地區</option>
-                    {regions.map(region => (
-                      <option key={region} value={region}>{region}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 <div className="grid gap-2">
                   <label htmlFor="ls-add-instance" className="text-sm font-medium">執行個體</label>
-                  <select
+                  <CustomSelect
                     id="ls-add-instance"
-                    className="h-9 rounded-md border bg-background px-3 text-sm"
                     value={addForm.instanceId}
+                    placeholder={loadingInstances ? "載入中…" : (instances.length === 0 ? "無可用執行個體" : "請選擇執行個體")}
                     disabled={loadingInstances || instances.length === 0}
-                    onChange={event => {
-                      const selected = instances.find(item => item.instanceId === event.target.value);
+                    options={instances.map(instance => ({
+                      value: instance.instanceId,
+                      label: `${instance.name}（${instance.state}）`,
+                    }))}
+                    onChange={val => {
+                      const selected = instances.find(item => item.instanceId === val);
                       setAddForm(previous => ({
                         ...previous,
-                        instanceId: event.target.value,
-                        name: selected?.name || event.target.value,
+                        instanceId: val,
+                        name: selected?.name || val,
                       }));
                     }}
-                  >
-                    <option value="">{loadingInstances ? "載入中…" : "請選擇執行個體"}</option>
-                    {instances.map(instance => (
-                      <option key={instance.instanceId} value={instance.instanceId}>
-                        {instance.name}（{instance.state}）
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 <div className="grid gap-2">
                   <label htmlFor="ls-add-name" className="text-sm font-medium">顯示名稱</label>

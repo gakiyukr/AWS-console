@@ -14,6 +14,7 @@ import { readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
+import { CustomSelect } from "@/components/ui/select";
 
 interface SelectOption {
   value: string
@@ -272,7 +273,6 @@ export default function Ec2Page() {
     ? Boolean(form.sshKeyId)
     : form.rootPassword.length >= 8 && form.rootPassword.length <= 128;
   const canDeploy = Boolean(form.accountId && form.region && form.vpcId && form.os && credentialReady);
-  const selectClassName = "h-9 rounded-md border bg-background px-3 text-sm";
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -304,65 +304,59 @@ export default function Ec2Page() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="grid content-start gap-2">
               <label htmlFor="ec2-account" className="text-sm font-medium">AWS 帳號</label>
-              <select
+              <CustomSelect
                 id="ec2-account"
-                className={selectClassName}
+                value={form.accountId}
+                placeholder="請選擇 AWS 帳號"
                 disabled={loadingInitial || busy}
-                value={form.accountId ?? ""}
-                onChange={event => selectAccount(event.target.value ? Number(event.target.value) : null)}
-              >
-                <option value="" disabled>請選擇 AWS 帳號</option>
-                {accounts.map(account => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}{account.isDefault ? "（預設）" : ""}
-                  </option>
-                ))}
-              </select>
+                options={accounts.map(account => ({
+                  value: String(account.id),
+                  label: `${account.name}${account.isDefault ? "（預設）" : ""}`,
+                }))}
+                onChange={val => selectAccount(val ? Number(val) : null)}
+              />
             </div>
             <div className="grid content-start gap-2">
               <label htmlFor="ec2-region" className="text-sm font-medium">Region</label>
-              <select
+              <CustomSelect
                 id="ec2-region"
-                className={selectClassName}
-                disabled={!form.accountId || loadingInitial || busy}
                 value={form.region}
-                onChange={event => selectRegion(event.target.value)}
-              >
-                <option value="">請選擇 Region</option>
-                {regions.map(region => (
-                  <option key={region} value={region}>{regionLabel(region)}</option>
-                ))}
-              </select>
+                placeholder="請選擇 Region"
+                disabled={!form.accountId || loadingInitial || busy}
+                options={regions.map(region => ({
+                  value: region,
+                  label: regionLabel(region),
+                }))}
+                onChange={selectRegion}
+              />
             </div>
             <div className="grid content-start gap-2">
               <label htmlFor="ec2-vpc" className="text-sm font-medium">VPC</label>
-              <select
+              <CustomSelect
                 id="ec2-vpc"
-                className={selectClassName}
-                disabled={!form.region || loadingVpcs || busy}
                 value={form.vpcId}
-                onChange={event => setForm(previous => ({ ...previous, vpcId: event.target.value }))}
-              >
-                <option value="">{loadingVpcs ? "載入中..." : "請選擇 VPC"}</option>
-                {vpcs.map(vpc => (
-                  <option key={vpc.value} value={vpc.value}>{vpc.label}</option>
-                ))}
-              </select>
+                placeholder={loadingVpcs ? "載入中..." : "請選擇 VPC"}
+                disabled={!form.region || loadingVpcs || busy}
+                options={vpcs.map(vpc => ({
+                  value: vpc.value,
+                  label: vpc.label,
+                }))}
+                onChange={val => setForm(previous => ({ ...previous, vpcId: val }))}
+              />
             </div>
             <div className="grid content-start gap-2">
               <label htmlFor="ec2-os" className="text-sm font-medium">作業系統</label>
-              <select
+              <CustomSelect
                 id="ec2-os"
-                className={selectClassName}
-                disabled={loadingInitial || busy}
                 value={form.os}
-                onChange={event => setForm(previous => ({ ...previous, os: event.target.value }))}
-              >
-                <option value="">請選擇作業系統</option>
-                {osOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
+                placeholder="請選擇作業系統"
+                disabled={loadingInitial || busy}
+                options={osOptions.map(option => ({
+                  value: option.value,
+                  label: option.label,
+                }))}
+                onChange={val => setForm(previous => ({ ...previous, os: val }))}
+              />
             </div>
           </div>
 
@@ -385,19 +379,19 @@ export default function Ec2Page() {
           <div className="grid grid-cols-1 gap-4 rounded-md border p-4 md:grid-cols-2">
             <div className="grid content-start gap-2">
               <label htmlFor="ec2-credential-type" className="text-sm font-medium">登入憑證</label>
-              <select
+              <CustomSelect
                 id="ec2-credential-type"
-                className={selectClassName}
-                disabled={busy}
                 value={form.credentialType}
-                onChange={event => setForm(previous => ({
+                disabled={busy}
+                options={[
+                  { value: "ssh_key", label: "SSH 公鑰" },
+                  { value: "password", label: "自訂密碼" },
+                ]}
+                onChange={val => setForm(previous => ({
                   ...previous,
-                  credentialType: event.target.value as "ssh_key" | "password",
+                  credentialType: val as "ssh_key" | "password",
                 }))}
-              >
-                <option value="ssh_key">SSH 公鑰</option>
-                <option value="password">自訂密碼</option>
-              </select>
+              />
               <p className="text-xs text-muted">
                 公鑰登入會停用 root 密碼認證；自訂密碼不會被儲存，部署後請自行妥善保管。
               </p>
@@ -405,23 +399,20 @@ export default function Ec2Page() {
             {form.credentialType === "ssh_key" ? (
               <div className="grid content-start gap-2">
                 <label htmlFor="ec2-ssh-key" className="text-sm font-medium">SSH 公鑰</label>
-                <select
+                <CustomSelect
                   id="ec2-ssh-key"
-                  className={selectClassName}
+                  value={form.sshKeyId}
+                  placeholder={loadingKeys ? "載入中..." : "請選擇公鑰"}
                   disabled={loadingKeys || busy}
-                  value={form.sshKeyId ?? ""}
-                  onChange={event => setForm(previous => ({
-                    ...previous,
-                    sshKeyId: event.target.value ? Number(event.target.value) : null,
+                  options={sshKeys.map(key => ({
+                    value: String(key.id),
+                    label: `${key.label}（${sshKeyTypeLabel(key.publicKey)}）`,
                   }))}
-                >
-                  <option value="" disabled>{loadingKeys ? "載入中..." : "請選擇公鑰"}</option>
-                  {sshKeys.map(key => (
-                    <option key={key.id} value={key.id}>
-                      {key.label}（{sshKeyTypeLabel(key.publicKey)}）
-                    </option>
-                  ))}
-                </select>
+                  onChange={val => setForm(previous => ({
+                    ...previous,
+                    sshKeyId: val ? Number(val) : null,
+                  }))}
+                />
                 {!loadingKeys && sshKeys.length === 0 ? (
                   <p className="text-xs text-amber-600">尚無公鑰，請先到設定頁新增，或改用自訂密碼。</p>
                 ) : null}

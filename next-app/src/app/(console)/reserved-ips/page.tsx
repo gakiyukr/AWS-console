@@ -22,6 +22,7 @@ import { NoSsr } from "@/components/no-ssr";
 import { Table } from "@/components/table-lazy";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { truncateOcid } from "@/lib/ocid";
+import { CustomSelect } from "@/components/ui/select";
 
 interface OciAccountOption {
   id: number
@@ -242,19 +243,18 @@ export default function ReservedIpsPage() {
 
       {accounts.length > 0 ? (
         <div className="flex items-center gap-2">
-          <label htmlFor="reserved-ip-account-select" className="text-xs font-medium text-muted">OCI 帳號：</label>
-          <select
-            id="reserved-ip-account-select"
-            className="rounded-md border border-divider bg-surface px-2.5 py-1 text-xs"
-            value={accountId}
-            onChange={event => handleAccountChange(event.target.value)}
-          >
-            {accounts.map(account => (
-              <option key={account.id} value={account.id}>
-                {account.name} ({account.region})
-              </option>
-            ))}
-          </select>
+          <label htmlFor="reserved-ip-account-select" className="text-xs font-medium text-muted shrink-0">OCI 帳號：</label>
+          <div className="w-56">
+            <CustomSelect
+              id="reserved-ip-account-select"
+              value={accountId}
+              options={accounts.map(account => ({
+                value: String(account.id),
+                label: `${account.name} (${account.region})`,
+              }))}
+              onChange={handleAccountChange}
+            />
+          </div>
         </div>
       ) : null}
 

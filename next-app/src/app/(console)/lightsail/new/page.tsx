@@ -12,6 +12,7 @@ import { readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
+import { CustomSelect } from "@/components/ui/select";
 
 interface AwsAccountOption {
   id: number
@@ -317,32 +318,32 @@ export default function LightsailPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1.5 block text-sm font-medium">AWS 帳號</label>
-            <select
-              className={selectClassName}
-              value={form.accountId ?? ""}
-              onChange={async (e) => {
-                const accountId = Number(e.target.value) || null;
+            <CustomSelect
+              value={form.accountId}
+              placeholder="請選擇帳號"
+              options={accounts.map(account => ({
+                value: String(account.id),
+                label: account.name,
+              }))}
+              onChange={async (val) => {
+                const accountId = Number(val) || null;
                 setForm(previous => ({ ...previous, accountId, region: "", blueprintId: "", bundleId: "" }));
                 if (accountId) await loadRegions(accountId);
               }}
               disabled={loadingInitial || busy}
-            >
-              <option value="">請選擇帳號</option>
-              {accounts.map(account => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
+            />
           </div>
 
           <div>
             <label className="mb-1.5 block text-sm font-medium">Region</label>
-            <select
-              className={selectClassName}
+            <CustomSelect
               value={form.region}
-              onChange={async (e) => {
-                const region = e.target.value;
+              placeholder="請選擇 Region"
+              options={regions.map(region => ({
+                value: region,
+                label: regionLabel(region),
+              }))}
+              onChange={async (region) => {
                 setForm(previous => ({ ...previous, region, blueprintId: "", bundleId: "" }));
                 if (region && form.accountId) {
                   await Promise.all([
@@ -352,48 +353,35 @@ export default function LightsailPage() {
                 }
               }}
               disabled={!form.accountId || busy}
-            >
-              <option value="">請選擇 Region</option>
-              {regions.map(region => (
-                <option key={region} value={region}>
-                  {regionLabel(region)}
-                </option>
-              ))}
-            </select>
+            />
           </div>
 
           <div>
             <label className="mb-1.5 block text-sm font-medium">作業系統映像（Blueprint）</label>
-            <select
-              className={selectClassName}
+            <CustomSelect
               value={form.blueprintId}
-              onChange={(e) => setForm(previous => ({ ...previous, blueprintId: e.target.value }))}
+              placeholder={loadingBlueprints ? "載入中..." : "請選擇 Blueprint"}
+              options={blueprints.map(bp => ({
+                value: bp.blueprintId,
+                label: bp.name,
+              }))}
+              onChange={(val) => setForm(previous => ({ ...previous, blueprintId: val }))}
               disabled={!form.region || loadingBlueprints || busy}
-            >
-              <option value="">請選擇 Blueprint</option>
-              {blueprints.map(bp => (
-                <option key={bp.blueprintId} value={bp.blueprintId}>
-                  {bp.name}
-                </option>
-              ))}
-            </select>
+            />
           </div>
 
           <div>
             <label className="mb-1.5 block text-sm font-medium">規格方案（Bundle）</label>
-            <select
-              className={selectClassName}
+            <CustomSelect
               value={form.bundleId}
-              onChange={(e) => setForm(previous => ({ ...previous, bundleId: e.target.value }))}
+              placeholder={loadingBundles ? "載入中..." : "請選擇 Bundle"}
+              options={bundles.map(bundle => ({
+                value: bundle.bundleId,
+                label: `${bundle.name} - $${bundle.price}/月 (${bundle.cpuCount} vCPU, ${bundle.ramSizeInGb} GB RAM)`,
+              }))}
+              onChange={(val) => setForm(previous => ({ ...previous, bundleId: val }))}
               disabled={!form.region || loadingBundles || busy}
-            >
-              <option value="">請選擇 Bundle</option>
-              {bundles.map(bundle => (
-                <option key={bundle.bundleId} value={bundle.bundleId}>
-                  {bundle.name} - ${bundle.price}/月 ({bundle.cpuCount} vCPU, {bundle.ramSizeInGb} GB RAM)
-                </option>
-              ))}
-            </select>
+            />
           </div>
 
           <div className="sm:col-span-2">
@@ -435,19 +423,16 @@ export default function LightsailPage() {
           {form.credentialType === "ssh_key" && (
             <div className="sm:col-span-2">
               <label className="mb-1.5 block text-sm font-medium">SSH 公鑰</label>
-              <select
-                className={selectClassName}
-                value={form.sshKeyId ?? ""}
-                onChange={(e) => setForm(previous => ({ ...previous, sshKeyId: Number(e.target.value) || null }))}
+              <CustomSelect
+                value={form.sshKeyId}
+                placeholder={loadingKeys ? "載入中..." : "請選擇公鑰"}
+                options={sshKeys.map(key => ({
+                  value: String(key.id),
+                  label: `${key.label} (${sshKeyTypeLabel(key.publicKey)})`,
+                }))}
+                onChange={(val) => setForm(previous => ({ ...previous, sshKeyId: Number(val) || null }))}
                 disabled={loadingKeys || busy}
-              >
-                <option value="">請選擇公鑰</option>
-                {sshKeys.map(key => (
-                  <option key={key.id} value={key.id}>
-                    {key.label} ({sshKeyTypeLabel(key.publicKey)})
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           )}
 

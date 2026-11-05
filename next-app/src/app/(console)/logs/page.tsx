@@ -10,6 +10,7 @@ import { Card } from "@heroui/react/card";
 import { Table } from "@/components/table-lazy";
 import { NoSsr } from "@/components/no-ssr";
 import { readJson, toastDanger } from "@/lib/api-client";
+import { CustomSelect } from "@/components/ui/select";
 
 interface OperationLog {
   id: number
@@ -122,8 +123,6 @@ export default function LogsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const selectClassName = "h-9 rounded-md border bg-background px-3 text-sm";
-
   return (
     <div className="flex w-full flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -147,57 +146,49 @@ export default function LogsPage() {
         <Card.Content className="grid gap-3 p-6 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_140px_auto] lg:items-end">
           <div className="grid gap-2">
             <label htmlFor="log-account" className="text-sm font-medium">AWS 帳號</label>
-            <select
+            <CustomSelect
               id="log-account"
-              className={selectClassName}
               value={filters.accountId}
-              onChange={event => setFilters(previous => ({ ...previous, accountId: event.target.value }))}
-            >
-              <option value="">全部帳號</option>
-              {accounts.map(account => (
-                <option key={account.id} value={String(account.id)}>{account.name}</option>
-              ))}
-            </select>
+              options={[
+                { value: "", label: "全部帳號" },
+                ...accounts.map(account => ({ value: String(account.id), label: account.name })),
+              ]}
+              onChange={val => setFilters(previous => ({ ...previous, accountId: val }))}
+            />
           </div>
           <div className="grid gap-2">
             <label htmlFor="log-action" className="text-sm font-medium">操作</label>
-            <select
+            <CustomSelect
               id="log-action"
-              className={selectClassName}
               value={filters.action}
-              onChange={event => setFilters(previous => ({ ...previous, action: event.target.value }))}
-            >
-              <option value="">全部操作</option>
-              {Object.entries(ACTION_LABELS).map(([action, label]) => (
-                <option key={action} value={action}>{label}</option>
-              ))}
-            </select>
+              options={[
+                { value: "", label: "全部操作" },
+                ...Object.entries(ACTION_LABELS).map(([action, label]) => ({ value: action, label })),
+              ]}
+              onChange={val => setFilters(previous => ({ ...previous, action: val }))}
+            />
           </div>
           <div className="grid gap-2">
             <label htmlFor="log-status" className="text-sm font-medium">結果</label>
-            <select
+            <CustomSelect
               id="log-status"
-              className={selectClassName}
               value={filters.status}
-              onChange={event => setFilters(previous => ({ ...previous, status: event.target.value }))}
-            >
-              <option value="">全部結果</option>
-              <option value="success">成功</option>
-              <option value="failure">失敗</option>
-            </select>
+              options={[
+                { value: "", label: "全部結果" },
+                { value: "success", label: "成功" },
+                { value: "failure", label: "失敗" },
+              ]}
+              onChange={val => setFilters(previous => ({ ...previous, status: val }))}
+            />
           </div>
           <div className="grid gap-2">
             <label htmlFor="log-limit" className="text-sm font-medium">筆數</label>
-            <select
+            <CustomSelect
               id="log-limit"
-              className={selectClassName}
-              value={filters.limit}
-              onChange={event => setFilters(previous => ({ ...previous, limit: Number(event.target.value) }))}
-            >
-              {[50, 200, 500, 1000].map(limit => (
-                <option key={limit} value={limit}>{limit}</option>
-              ))}
-            </select>
+              value={String(filters.limit)}
+              options={[50, 200, 500, 1000].map(limit => ({ value: String(limit), label: `${limit} 筆` }))}
+              onChange={val => setFilters(previous => ({ ...previous, limit: Number(val) }))}
+            />
           </div>
           <Button variant="secondary" isDisabled={loading} onPress={loadLogs}>
             套用篩選

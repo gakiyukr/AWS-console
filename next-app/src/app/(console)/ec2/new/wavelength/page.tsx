@@ -15,6 +15,7 @@ import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
+import { CustomSelect } from "@/components/ui/select";
 
 interface SelectOption {
   value: string
@@ -450,7 +451,6 @@ export default function WavelengthPage() {
   const canDeployWavelength = Boolean(canInitialize && form.instanceType && form.os && credentialReady);
   const canDeployExistingForwarder = Boolean(canInitialize && form.os && form.existingInstanceId && credentialReady);
   const resultText = result ? JSON.stringify(result, null, 2) : "";
-  const selectClassName = "h-9 rounded-md border bg-background px-3 text-sm";
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -487,88 +487,72 @@ export default function WavelengthPage() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="grid content-start gap-2">
               <label htmlFor="wl-account" className="text-sm font-medium">AWS 帳號</label>
-              <select
+              <CustomSelect
                 id="wl-account"
-                className={selectClassName}
+                value={form.accountId}
+                placeholder="請選擇 AWS 帳號"
                 disabled={loadingInitial || isBusy}
-                value={form.accountId ?? ""}
-                onChange={event => selectAccount(event.target.value ? Number(event.target.value) : null)}
-              >
-                <option value="" disabled>請選擇 AWS 帳號</option>
-                {accounts.map(account => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}{account.isDefault ? "（預設）" : ""}
-                  </option>
-                ))}
-              </select>
+                options={accounts.map(account => ({
+                  value: String(account.id),
+                  label: `${account.name}${account.isDefault ? "（預設）" : ""}`,
+                }))}
+                onChange={val => selectAccount(val ? Number(val) : null)}
+              />
             </div>
             <div className="grid content-start gap-2">
               <label htmlFor="wl-region" className="text-sm font-medium">Region</label>
-              <select
+              <CustomSelect
                 id="wl-region"
-                className={selectClassName}
-                disabled={loadingInitial || isBusy}
                 value={form.region}
-                onChange={event => void loadRegionOptions(event.target.value)}
-              >
-                <option value="">請選擇 Region</option>
-                {regions.map(region => (
-                  <option key={region} value={region}>{regionLabel(region)}</option>
-                ))}
-              </select>
+                placeholder="請選擇 Region"
+                disabled={loadingInitial || isBusy}
+                options={regions.map(region => ({
+                  value: region,
+                  label: regionLabel(region),
+                }))}
+                onChange={val => void loadRegionOptions(val)}
+              />
             </div>
             <div className="grid content-start gap-2">
               <label htmlFor="wl-zone" className="text-sm font-medium">Wavelength Zone</label>
-              <select
+              <CustomSelect
                 id="wl-zone"
-                className={selectClassName}
-                disabled={!form.region || loadingRegion || isBusy}
                 value={form.zone}
-                onChange={event => selectZone(event.target.value)}
-              >
-                <option value="">{loadingRegion ? "載入中..." : "請選擇 Zone"}</option>
-                {zones.map(zone => (
-                  <option key={zone} value={zone}>{zone}</option>
-                ))}
-              </select>
+                placeholder={loadingRegion ? "載入中..." : "請選擇 Zone"}
+                disabled={!form.region || loadingRegion || isBusy}
+                options={zones.map(zone => ({ value: zone, label: zone }))}
+                onChange={selectZone}
+              />
             </div>
             <div className="grid content-start gap-2">
               <label htmlFor="wl-vpc" className="text-sm font-medium">VPC</label>
-              <select
+              <CustomSelect
                 id="wl-vpc"
-                className={selectClassName}
-                disabled={!form.region || loadingRegion || isBusy}
                 value={form.vpcId}
-                onChange={event => selectVpc(event.target.value)}
-              >
-                <option value="">{loadingRegion ? "載入中..." : "請選擇 VPC"}</option>
-                {vpcs.map(vpc => (
-                  <option key={vpc.value} value={vpc.value}>{vpc.label}</option>
-                ))}
-              </select>
+                placeholder={loadingRegion ? "載入中..." : "請選擇 VPC"}
+                disabled={!form.region || loadingRegion || isBusy}
+                options={vpcs.map(vpc => ({ value: vpc.value, label: vpc.label }))}
+                onChange={selectVpc}
+              />
             </div>
             <div className="grid content-start gap-2">
               <label htmlFor="wl-type" className="text-sm font-medium">WL Instance Type</label>
-              <select
+              <CustomSelect
                 id="wl-type"
-                className={selectClassName}
-                disabled={!form.zone || loadingTypes || isBusy}
                 value={form.instanceType}
-                onChange={event => updateForm({ instanceType: event.target.value })}
-              >
-                <option value="">{loadingTypes ? "載入中..." : "請選擇機型"}</option>
-                {instanceTypes.map(type => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-                {!loadingTypes && instanceTypes.length === 0 && (
-                  <optgroup label="常見 Wavelength 機型（API 未回報時可選）">
-                    <option value="t3.nano">t3.nano</option>
-                    <option value="t3.small">t3.small</option>
-                    <option value="t3.medium">t3.medium</option>
-                    <option value="t3.large">t3.large</option>
-                  </optgroup>
-                )}
-              </select>
+                placeholder={loadingTypes ? "載入中..." : "請選擇機型"}
+                disabled={!form.zone || loadingTypes || isBusy}
+                options={[
+                  ...instanceTypes.map(type => ({ value: type, label: type })),
+                  ...(!loadingTypes && instanceTypes.length === 0 ? [
+                    { value: "t3.nano", label: "t3.nano (常見機型)" },
+                    { value: "t3.small", label: "t3.small (常見機型)" },
+                    { value: "t3.medium", label: "t3.medium (常見機型)" },
+                    { value: "t3.large", label: "t3.large (常見機型)" },
+                  ] : []),
+                ]}
+                onChange={val => updateForm({ instanceType: val })}
+              />
               <p className="text-xs text-muted">
                 {loadingTypes
                   ? "查詢 AWS 可用執行個體類型..."
@@ -579,18 +563,14 @@ export default function WavelengthPage() {
             </div>
             <div className="grid content-start gap-2">
               <label htmlFor="wl-os" className="text-sm font-medium">作業系統</label>
-              <select
+              <CustomSelect
                 id="wl-os"
-                className={selectClassName}
-                disabled={loadingInitial || isBusy}
                 value={form.os}
-                onChange={event => updateForm({ os: event.target.value })}
-              >
-                <option value="">請選擇作業系統</option>
-                {osOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
+                placeholder="請選擇作業系統"
+                disabled={loadingInitial || isBusy}
+                options={osOptions.map(option => ({ value: option.value, label: option.label }))}
+                onChange={val => updateForm({ os: val })}
+              />
             </div>
             <div className="flex items-end pb-2">
               <label htmlFor="wl-forwarder" className="flex items-center gap-2 text-sm">
@@ -611,16 +591,16 @@ export default function WavelengthPage() {
           <div className="grid grid-cols-1 gap-4 rounded-md border p-4 md:grid-cols-2">
             <div className="grid content-start gap-2">
               <label htmlFor="wl-credential-type" className="text-sm font-medium">登入憑證</label>
-              <select
+              <CustomSelect
                 id="wl-credential-type"
-                className={selectClassName}
-                disabled={isBusy}
                 value={form.credentialType}
-                onChange={event => updateForm({ credentialType: event.target.value as "ssh_key" | "password" })}
-              >
-                <option value="ssh_key">SSH 公鑰</option>
-                <option value="password">自訂密碼</option>
-              </select>
+                disabled={isBusy}
+                options={[
+                  { value: "ssh_key", label: "SSH 公鑰" },
+                  { value: "password", label: "自訂密碼" },
+                ]}
+                onChange={val => updateForm({ credentialType: val as "ssh_key" | "password" })}
+              />
               <p className="text-xs text-muted">
                 公鑰登入會停用 root 密碼認證；自訂密碼不會被儲存，部署後請自行妥善保管。
               </p>
@@ -628,20 +608,17 @@ export default function WavelengthPage() {
             {form.credentialType === "ssh_key" ? (
               <div className="grid content-start gap-2">
                 <label htmlFor="wl-ssh-key" className="text-sm font-medium">SSH 公鑰</label>
-                <select
+                <CustomSelect
                   id="wl-ssh-key"
-                  className={selectClassName}
+                  value={form.sshKeyId}
+                  placeholder={loadingKeys ? "載入中..." : "請選擇公鑰"}
                   disabled={loadingKeys || isBusy}
-                  value={form.sshKeyId ?? ""}
-                  onChange={event => updateForm({ sshKeyId: event.target.value ? Number(event.target.value) : null })}
-                >
-                  <option value="" disabled>{loadingKeys ? "載入中..." : "請選擇公鑰"}</option>
-                  {sshKeys.map(key => (
-                    <option key={key.id} value={key.id}>
-                      {key.label}（{sshKeyTypeLabel(key.publicKey)}）
-                    </option>
-                  ))}
-                </select>
+                  options={sshKeys.map(key => ({
+                    value: String(key.id),
+                    label: `${key.label}（${sshKeyTypeLabel(key.publicKey)}）`,
+                  }))}
+                  onChange={val => updateForm({ sshKeyId: val ? Number(val) : null })}
+                />
                 {!loadingKeys && sshKeys.length === 0 ? (
                   <p className="text-xs text-amber-600">尚無公鑰，請先到設定頁新增，或改用自訂密碼。</p>
                 ) : null}
@@ -696,20 +673,17 @@ export default function WavelengthPage() {
             </label>
             <div className="grid gap-2">
               <label htmlFor="existing-instance" className="text-sm font-medium">目標執行個體</label>
-              <select
+              <CustomSelect
                 id="existing-instance"
-                className={selectClassName}
-                disabled={!form.useExistingInstance || loadingInstances || isBusy}
                 value={form.existingInstanceId}
-                onChange={event => updateForm({ existingInstanceId: event.target.value })}
-              >
-                <option value="">{loadingInstances ? "載入中..." : "請選擇既有執行個體"}</option>
-                {existingInstances.map(instance => (
-                  <option key={instance.instance_id} value={instance.instance_id}>
-                    {instance.instance_id} | {instance.private_ip || "無私網 IP"} | {instance.state} | {instance.instance_type}
-                  </option>
-                ))}
-              </select>
+                placeholder={loadingInstances ? "載入中..." : "請選擇既有執行個體"}
+                disabled={!form.useExistingInstance || loadingInstances || isBusy}
+                options={existingInstances.map(instance => ({
+                  value: instance.instance_id,
+                  label: `${instance.instance_id} | ${instance.private_ip || "無私網 IP"} | ${instance.state} | ${instance.instance_type}`,
+                }))}
+                onChange={val => updateForm({ existingInstanceId: val })}
+              />
             </div>
             <div>
               <Button variant="secondary" isDisabled={!canDeployExistingForwarder || isBusy} onPress={deployExistingForwarder}>

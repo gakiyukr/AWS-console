@@ -32,6 +32,7 @@ import { Table } from "@/components/table-lazy";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { isTransitionState, lifecycleLabel, truncateOcid } from "@/lib/ocid";
+import { CustomSelect } from "@/components/ui/select";
 
 interface OciAccountOption {
   id: number
@@ -384,19 +385,20 @@ export default function InstancesPage() {
               新增執行個體
             </Button>
           </Link>
-          <select
-            aria-label="選擇 OCI 帳號"
-            className="h-9 rounded-md border bg-background px-3 text-sm"
-            value={accountId}
-            onChange={event => {
-              setAccountId(event.target.value);
-              void loadInstances(event.target.value);
-            }}
-          >
-            {accounts.map(account => (
-              <option key={account.id} value={String(account.id)}>{account.name}</option>
-            ))}
-          </select>
+          <div className="w-48">
+            <CustomSelect
+              value={accountId}
+              placeholder="選擇 OCI 帳號"
+              options={accounts.map(account => ({
+                value: String(account.id),
+                label: account.name,
+              }))}
+              onChange={val => {
+                setAccountId(val);
+                void loadInstances(val);
+              }}
+            />
+          </div>
           <Button size="sm" isDisabled={loading} onPress={() => loadInstances(accountId)}>
             {loading ? <Loader2 aria-hidden size={16} className="animate-spin" /> : <RefreshCw aria-hidden size={16} />}
             重新整理
@@ -761,49 +763,55 @@ export default function InstancesPage() {
             <>
               <div>
                 <label htmlFor="share-action-select" className="text-xs font-medium">授權操作動作</label>
-                <select
-                  id="share-action-select"
-                  className="mt-1 w-full rounded-md border border-divider bg-surface px-3 py-1.5 text-xs"
-                  value={shareAction}
-                  onChange={event => setShareAction(event.target.value)}
-                >
-                  <option value="start">開機 (START)</option>
-                  <option value="stop">關機 (SOFTSTOP)</option>
-                  <option value="force-stop">強制斷電 (STOP)</option>
-                  <option value="reboot">重啟 (SOFTRESET)</option>
-                  <option value="reboot-ip">更換公網 IP (rotate-ip)</option>
-                  <option value="firewall">一鍵開防火牆 (firewall)</option>
-                </select>
+                <div className="mt-1">
+                  <CustomSelect
+                    id="share-action-select"
+                    value={shareAction}
+                    options={[
+                      { value: "start", label: "開機 (START)" },
+                      { value: "stop", label: "關機 (SOFTSTOP)" },
+                      { value: "force-stop", label: "強制斷電 (STOP)" },
+                      { value: "reboot", label: "重啟 (SOFTRESET)" },
+                      { value: "reboot-ip", label: "更換公網 IP (rotate-ip)" },
+                      { value: "firewall", label: "一鍵開防火牆 (firewall)" },
+                    ]}
+                    onChange={setShareAction}
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label htmlFor="share-duration-select" className="text-xs font-medium">有效期限</label>
-                  <select
-                    id="share-duration-select"
-                    className="mt-1 w-full rounded-md border border-divider bg-surface px-3 py-1.5 text-xs"
-                    value={shareDuration}
-                    onChange={event => setShareDuration(event.target.value)}
-                  >
-                    <option value="1">1 小時</option>
-                    <option value="6">6 小時</option>
-                    <option value="24">24 小時（1 天）</option>
-                    <option value="72">72 小時（3 天）</option>
-                    <option value="168">7 天</option>
-                  </select>
+                  <div className="mt-1">
+                    <CustomSelect
+                      id="share-duration-select"
+                      value={shareDuration}
+                      options={[
+                        { value: "1", label: "1 小時" },
+                        { value: "6", label: "6 小時" },
+                        { value: "24", label: "24 小時（1 天）" },
+                        { value: "72", label: "72 小時（3 天）" },
+                        { value: "168", label: "7 天" },
+                      ]}
+                      onChange={setShareDuration}
+                    />
+                  </div>
                 </div>
                 <div>
                   <label htmlFor="share-max-uses-select" className="text-xs font-medium">次數上限</label>
-                  <select
-                    id="share-max-uses-select"
-                    className="mt-1 w-full rounded-md border border-divider bg-surface px-3 py-1.5 text-xs"
-                    value={shareMaxUses}
-                    onChange={event => setShareMaxUses(event.target.value)}
-                  >
-                    <option value="0">無限制</option>
-                    <option value="1">僅限 1 次</option>
-                    <option value="3">最多 3 次</option>
-                    <option value="5">最多 5 次</option>
-                  </select>
+                  <div className="mt-1">
+                    <CustomSelect
+                      id="share-max-uses-select"
+                      value={shareMaxUses}
+                      options={[
+                        { value: "0", label: "無限制" },
+                        { value: "1", label: "僅限 1 次" },
+                        { value: "3", label: "最多 3 次" },
+                        { value: "5", label: "最多 5 次" },
+                      ]}
+                      onChange={setShareMaxUses}
+                    />
+                  </div>
                 </div>
               </div>
               <div>

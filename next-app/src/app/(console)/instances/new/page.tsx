@@ -12,6 +12,7 @@ import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Chip } from "@/components/chip";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
+import { CustomSelect } from "@/components/ui/select";
 
 interface OciAccountOption {
   id: number
@@ -288,7 +289,6 @@ export default function NewInstancePage() {
     }
   }
 
-  const selectClassName = "h-9 rounded-md border bg-background px-3 text-sm disabled:opacity-50";
   const inputClassName = "rounded-md border bg-background px-3 py-2 text-sm";
 
   return (
@@ -321,20 +321,20 @@ export default function NewInstancePage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="grid gap-2">
                   <label htmlFor="new-account" className="text-sm font-medium">OCI 帳號</label>
-                  <select
+                  <CustomSelect
                     id="new-account"
-                    className={selectClassName}
                     value={accountId}
+                    placeholder="請選擇 OCI 帳號"
                     disabled={optionsLoading || submitting}
-                    onChange={async event => {
-                      setAccountId(event.target.value);
-                      await loadOptions(event.target.value);
+                    options={accounts.map(account => ({
+                      value: String(account.id),
+                      label: account.name,
+                    }))}
+                    onChange={async val => {
+                      setAccountId(val);
+                      await loadOptions(val);
                     }}
-                  >
-                    {accounts.map(account => (
-                      <option key={account.id} value={String(account.id)}>{account.name}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 <div className="grid gap-2">
                   <label htmlFor="new-name" className="text-sm font-medium">名稱</label>
@@ -349,11 +349,17 @@ export default function NewInstancePage() {
                 </div>
                 <div className="grid gap-2">
                   <label htmlFor="new-ad" className="text-sm font-medium">Availability Domain</label>
-                  <select id="new-ad" className={selectClassName} value={ad} onChange={event => setAd(event.target.value)} disabled={submitting || optionsLoading}>
-                    {(options?.availabilityDomains || []).map(domain => (
-                      <option key={domain.name} value={domain.name}>{domain.name}</option>
-                    ))}
-                  </select>
+                  <CustomSelect
+                    id="new-ad"
+                    value={ad}
+                    placeholder="請選擇 Availability Domain"
+                    disabled={submitting || optionsLoading}
+                    options={(options?.availabilityDomains || []).map(domain => ({
+                      value: domain.name,
+                      label: domain.name,
+                    }))}
+                    onChange={setAd}
+                  />
                 </div>
               </div>
             </Card.Content>
@@ -366,11 +372,17 @@ export default function NewInstancePage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="grid gap-2">
                   <label htmlFor="new-shape" className="text-sm font-medium">Shape</label>
-                  <select id="new-shape" className={selectClassName} value={shape} onChange={event => setShape(event.target.value)} disabled={submitting || optionsLoading}>
-                    {(options?.shapes || []).map(item => (
-                      <option key={item.shape} value={item.shape}>{item.shape}</option>
-                    ))}
-                  </select>
+                  <CustomSelect
+                    id="new-shape"
+                    value={shape}
+                    placeholder="請選擇 Shape"
+                    disabled={submitting || optionsLoading}
+                    options={(options?.shapes || []).map(item => ({
+                      value: item.shape,
+                      label: item.shape,
+                    }))}
+                    onChange={setShape}
+                  />
                   {FREE_TIER_HINTS[shape] ? (
                     <p className="text-xs text-muted">
                       <Chip variant="secondary" size="sm">Always Free</Chip>{" "}{FREE_TIER_HINTS[shape]}
@@ -410,41 +422,46 @@ export default function NewInstancePage() {
                 ) : null}
                 <div className="grid gap-2 sm:col-span-2">
                   <label htmlFor="new-image-os" className="text-sm font-medium">作業系統</label>
-                  <select
+                  <CustomSelect
                     id="new-image-os"
-                    className={selectClassName}
                     value={imageOs}
-                    onChange={event => { setImageOs(event.target.value); setImageVersion(""); setImageId(""); }}
+                    placeholder="請選擇作業系統"
                     disabled={submitting || imagesLoading || osList.length === 0}
-                  >
-                    {osList.map(os => <option key={os} value={os}>{os}</option>)}
-                  </select>
+                    options={osList.map(os => ({ value: os, label: os }))}
+                    onChange={val => {
+                      setImageOs(val);
+                      setImageVersion("");
+                      setImageId("");
+                    }}
+                  />
                 </div>
                 <div className="grid gap-2 sm:col-span-2">
                   <label htmlFor="new-image-version" className="text-sm font-medium">版本</label>
-                  <select
+                  <CustomSelect
                     id="new-image-version"
-                    className={selectClassName}
                     value={effectiveVersion}
-                    onChange={event => { setImageVersion(event.target.value); setImageId(""); }}
+                    placeholder="請選擇版本"
                     disabled={submitting || imagesLoading || versionList.length === 0}
-                  >
-                    {versionList.map(version => <option key={version} value={version}>{version}</option>)}
-                  </select>
+                    options={versionList.map(version => ({ value: version, label: version }))}
+                    onChange={val => {
+                      setImageVersion(val);
+                      setImageId("");
+                    }}
+                  />
                 </div>
                 <div className="grid gap-2 sm:col-span-2">
                   <label htmlFor="new-image" className="text-sm font-medium">映像</label>
-                  <select
+                  <CustomSelect
                     id="new-image"
-                    className={selectClassName}
                     value={effectiveImageId}
-                    onChange={event => setImageId(event.target.value)}
+                    placeholder={imagesLoading ? "載入映像清單中..." : "請選擇映像"}
                     disabled={submitting || imagesLoading || variantList.length === 0}
-                  >
-                    {variantList.map(image => (
-                      <option key={image.id} value={image.id}>{image.displayName}</option>
-                    ))}
-                  </select>
+                    options={variantList.map(image => ({
+                      value: image.id,
+                      label: image.displayName,
+                    }))}
+                    onChange={setImageId}
+                  />
                   {imagesLoading ? (
                     <p className="flex items-center gap-2 text-xs text-muted">
                       <Loader2 aria-hidden size={12} className="animate-spin" />載入映像清單…
@@ -481,19 +498,31 @@ export default function NewInstancePage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="grid gap-2">
                   <label htmlFor="new-vcn" className="text-sm font-medium">VCN</label>
-                  <select id="new-vcn" className={selectClassName} value={vcnId} onChange={event => onVcnChange(event.target.value)} disabled={submitting || optionsLoading}>
-                    {(options?.networks || []).map(network => (
-                      <option key={network.vcnId} value={network.vcnId}>{network.vcnName}</option>
-                    ))}
-                  </select>
+                  <CustomSelect
+                    id="new-vcn"
+                    value={vcnId}
+                    placeholder="請選擇 VCN"
+                    disabled={submitting || optionsLoading}
+                    options={(options?.networks || []).map(network => ({
+                      value: network.vcnId,
+                      label: `${network.vcnName} (${network.cidrBlock})`,
+                    }))}
+                    onChange={onVcnChange}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <label htmlFor="new-subnet" className="text-sm font-medium">子網</label>
-                  <select id="new-subnet" className={selectClassName} value={subnetId} onChange={event => onSubnetChange(event.target.value)} disabled={submitting || optionsLoading || !vcnId}>
-                    {(selectedVcn?.subnets || []).map(subnet => (
-                      <option key={subnet.id} value={subnet.id}>{subnet.displayName}（{subnet.cidrBlock}）</option>
-                    ))}
-                  </select>
+                  <CustomSelect
+                    id="new-subnet"
+                    value={subnetId}
+                    placeholder={!vcnId ? "請先選擇 VCN" : "請選擇子網"}
+                    disabled={submitting || optionsLoading || !vcnId}
+                    options={(selectedVcn?.subnets || []).map(subnet => ({
+                      value: subnet.id,
+                      label: `${subnet.displayName} (${subnet.cidrBlock})`,
+                    }))}
+                    onChange={onSubnetChange}
+                  />
                   {selectedSubnet?.prohibitPublicIpOnLaunch ? (
                     <p className="text-xs text-muted">此為私有子網，無法配置公網 IP。</p>
                   ) : null}

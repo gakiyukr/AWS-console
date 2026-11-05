@@ -25,7 +25,7 @@ function findAllTagValues(xml, tagName) {
  * ipAddress 欄位，只能由 DNS 反推；非 compute 網域或任一段大於
  * 255 時視為無法推導，回空字串。
  */
-function deriveIpFromPublicDns(publicDnsName) {
+export function deriveIpFromPublicDns(publicDnsName) {
   const match = String(publicDnsName || "").match(
     /^ec2-(\d{1,3})-(\d{1,3})-(\d{1,3})-(\d{1,3})\.[a-z0-9-]+\.compute(?:-1)?\.amazonaws\.com(?:\.cn)?$/i,
   );

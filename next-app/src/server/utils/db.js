@@ -18,7 +18,7 @@ import {
  * @returns {Promise<Array<{id:number, awsAccountId:number|null, region:string, instanceId:string, name:string, platform:string, isWavelength:boolean, createdAt:string}>>}
  */
 export async function listMachines(db, platform = null) {
-  const base = "SELECT id, aws_account_id AS awsAccountId, region, instance_id AS instanceId, name, platform, is_wavelength AS isWavelength, created_at AS createdAt FROM machines";
+  const base = "SELECT id, aws_account_id AS awsAccountId, region, instance_id AS instanceId, name, platform, is_wavelength AS isWavelength, ddns_hostname AS ddnsHostname, ddns_record_id AS ddnsRecordId, created_at AS createdAt FROM machines";
   const statement = platform
     ? db.prepare(`${base} WHERE platform = ?1 ORDER BY id`).bind(platform)
     : db.prepare(`${base} ORDER BY id`);
@@ -51,7 +51,7 @@ export async function createMachine(db, { awsAccountId = /** @type {number|null}
 /** 依主鍵取得單一機器；不存在回 null。 */
 export async function getMachineById(db, id) {
   const row = await db
-    .prepare("SELECT id, aws_account_id AS awsAccountId, region, instance_id AS instanceId, name, platform, is_wavelength AS isWavelength FROM machines WHERE id = ?1")
+    .prepare("SELECT id, aws_account_id AS awsAccountId, region, instance_id AS instanceId, name, platform, is_wavelength AS isWavelength, ddns_hostname AS ddnsHostname, ddns_record_id AS ddnsRecordId FROM machines WHERE id = ?1")
     .bind(id)
     .first();
   return row ? { ...row, isWavelength: Boolean(row.isWavelength) } : null;
@@ -322,6 +322,26 @@ export async function addCachedRegion(db, accountId, platform, region) {
     .prepare("INSERT OR IGNORE INTO account_regions (aws_account_id, platform, region) VALUES (?1, ?2, ?3)")
     .bind(accountId, platform, region)
     .run();
+}
+
+// ─── DDNS 綁定 ─────────────────────────────────────────────
+
+/** 設定機器的 DDNS 主機名與 CF 記錄 id（啟用／更新綁定）。 */
+export async function setMachineDdns(db, id, hostname, recordId = null) {
+  const result = await db
+    .prepare("UPDATE machines SET ddns_hostname = ?2, ddns_record_id = ?3 WHERE id = ?1")
+    .bind(id, hostname, recordId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/** 清除機器的 DDNS 綁定（停用）。回傳是否確實有變更。 */
+export async function clearMachineDdns(db, id) {
+  const result = await db
+    .prepare("UPDATE machines SET ddns_hostname = NULL, ddns_record_id = NULL WHERE id = ?1 AND ddns_hostname IS NOT NULL")
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 

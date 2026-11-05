@@ -16,6 +16,7 @@ import {
 import { errorResponse, readJsonBody, sseResponse, toHttpError } from "@/server/utils/http.js";
 import { deriveCapTokenKey, isShareCaptchaEnabled } from "@/server/utils/cap.js";
 import { rotateIpFailureMessage, rotatePublicIp } from "@/server/utils/power.js";
+import { syncMachineDdns } from "@/server/utils/ddns.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
 
@@ -97,6 +98,38 @@ export async function POST(
         await touchShareLinkUsed(env.DB, link.id);
       } catch {
         // 使用時間更新失敗不影響結果
+      }
+      if (machine.platform === "ec2" && !machine.isWavelength && machine.ddnsHostname) {
+        try {
+          const result = await syncMachineDdns(awsEnv, env.DB, machine, { knownIp: newIpAddress });
+          if (result.status === "updated" || result.status === "created") {
+            try {
+              await appendOperationLog(env.DB, {
+                action: "ddns-sync",
+                region: machine.region,
+                instanceId: machine.instanceId,
+                status: "success",
+                detail: { hostname: result.hostname, ip: result.ip, trigger: "share-rotate" },
+                awsAccountId: machine.awsAccountId,
+              });
+            } catch {
+              // 日誌失敗不影響回應
+            }
+          }
+        } catch (error) {
+          try {
+            await appendOperationLog(env.DB, {
+              action: "ddns-sync",
+              region: machine.region,
+              instanceId: machine.instanceId,
+              status: "failure",
+              detail: { trigger: "share-rotate", error: error instanceof Error ? error.message : String(error) },
+              awsAccountId: machine.awsAccountId,
+            });
+          } catch {
+            // 日誌失敗不影響回應
+          }
+        }
       }
       try {
         await appendOperationLog(env.DB, {

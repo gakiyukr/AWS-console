@@ -4,6 +4,7 @@
 import { errorResponse, jsonResponse, toHttpError } from "@/server/utils/http.js";
 import { appendOperationLog, getMachineById } from "@/server/utils/db.js";
 import { rotateIpFailureMessage, rotatePublicIp } from "@/server/utils/power.js";
+import { syncMachineDdns } from "@/server/utils/ddns.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
@@ -34,8 +35,9 @@ export async function POST(
     return errorResponse(400, "Lightsail 執行個體不支援更換公網 IP。");
   }
 
+  let awsEnv: Awaited<ReturnType<typeof resolveAwsAccount>>["awsEnv"];
   try {
-    const { awsEnv } = await resolveAwsAccount(env, machine.awsAccountId);
+    ({ awsEnv } = await resolveAwsAccount(env, machine.awsAccountId));
     await rotatePublicIp(awsEnv, machine);
   } catch (error) {
     const rotateError = error as { precheck?: boolean; recoveryRequested?: boolean } | null;
@@ -74,8 +76,44 @@ export async function POST(
     // AWS 操作已成功時，稽核日誌失敗不應回報操作失敗。
   }
 
+  // 換 IP 成功後同步 DDNS（綁定 hostname 的 EC2 機器）；失敗僅附警告，
+  // 不改動換 IP 本身的成功結果。
+  let ddnsWarning: string | undefined;
+  try {
+    const result = await syncMachineDdns(awsEnv, env.DB, machine);
+    if (result.status === "updated" || result.status === "created") {
+      try {
+        await appendOperationLog(env.DB, {
+          action: "ddns-sync",
+          region: machine.region,
+          instanceId: machine.instanceId,
+          status: "success",
+          detail: { hostname: result.hostname, ip: result.ip, trigger: "reboot-ip" },
+          awsAccountId: machine.awsAccountId,
+        });
+      } catch {
+        // 日誌失敗不影響回應
+      }
+    }
+  } catch (error) {
+    ddnsWarning = `DNS 同步失敗：${error instanceof Error ? error.message : String(error)}`;
+    try {
+      await appendOperationLog(env.DB, {
+        action: "ddns-sync",
+        region: machine.region,
+        instanceId: machine.instanceId,
+        status: "failure",
+        detail: { trigger: "reboot-ip", error: ddnsWarning },
+        awsAccountId: machine.awsAccountId,
+      });
+    } catch {
+      // 日誌失敗不影響回應
+    }
+  }
+
   return jsonResponse({
     ok: true,
     message: "已停止並重新啟動，公網 IP 將更換。",
+    ...(ddnsWarning ? { ddnsWarning } : {}),
   });
 }

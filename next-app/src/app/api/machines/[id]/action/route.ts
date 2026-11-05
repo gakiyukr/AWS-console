@@ -5,6 +5,7 @@ import { appendOperationLog, deleteMachine, getMachineById } from "@/server/util
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
 import { performLightsailPowerAction } from "@/server/utils/lightsail-power.js";
 import { performPowerAction } from "@/server/utils/power.js";
+import { syncMachineDdns } from "@/server/utils/ddns.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
@@ -57,9 +58,11 @@ export async function POST(
     return errorResponse(400, "不支援的操作。");
   }
   const powerAction = action as keyof typeof POWER_ACTIONS;
+  let ddnsWarning: string | undefined;
 
+  let awsEnv: Awaited<ReturnType<typeof resolveAwsAccount>>["awsEnv"];
   try {
-    const { awsEnv } = await resolveAwsAccount(env, machine.awsAccountId);
+    ({ awsEnv } = await resolveAwsAccount(env, machine.awsAccountId));
     // 依平台分流：Lightsail 用 StartInstance/StopInstance/RebootInstance/DeleteInstance
     if (machine.platform === "lightsail") {
       await performLightsailPowerAction(awsEnv, machine, powerAction);
@@ -103,10 +106,19 @@ export async function POST(
     } catch {
       // 清單刪除失敗不影響終止結果
     }
+  } else if (machine.platform === "ec2" && !machine.isWavelength) {
+    // 開關機可能改變公網 IP（stop→start 換 IP、stop 後 IP 釋放），成功後同步 DDNS；
+    // 失敗僅附警告，不改動電源操作本身的成功回應。
+    try {
+      await syncMachineDdns(awsEnv, env.DB, machine);
+    } catch (error) {
+      ddnsWarning = `DNS 同步失敗：${error instanceof Error ? error.message : String(error)}`;
+    }
   }
 
   return jsonResponse({
     ok: true,
     message: ACTION_MESSAGES[powerAction],
+    ...(ddnsWarning ? { ddnsWarning } : {}),
   });
 }

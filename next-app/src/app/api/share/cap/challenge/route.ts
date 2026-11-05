@@ -6,7 +6,7 @@ import { generateChallenge } from "capjs-core";
 import { errorResponse, jsonResponse } from "@/server/utils/http.js";
 import {
   CAP_SCOPE,
-  isCapSecretConfigured,
+  getCapSecret,
   isShareCaptchaEnabled,
 } from "@/server/utils/cap.js";
 import { deleteExpiredCapRows } from "@/server/utils/db.js";
@@ -17,9 +17,9 @@ export async function POST(): Promise<Response> {
   if (!await isShareCaptchaEnabled(env.DB)) {
     return errorResponse(404, "人機驗證未啟用。");
   }
-  const capSecret = env.CAP_SECRET;
-  if (!isCapSecretConfigured(env) || !capSecret) {
-    return errorResponse(503, "伺服器尚未設定人機驗證金鑰。");
+  const cap = await getCapSecret(env);
+  if (!cap) {
+    return errorResponse(503, "伺服器尚未設定人機驗證密鑰。");
   }
 
   // 過期的重放記錄與憑證在此順手清理；失敗不影響發放。
@@ -29,6 +29,6 @@ export async function POST(): Promise<Response> {
     // 清理失敗不影響 challenge 發放
   }
 
-  const challenge = await generateChallenge(capSecret, { scope: CAP_SCOPE });
+  const challenge = await generateChallenge(cap.secret, { scope: CAP_SCOPE });
   return jsonResponse(challenge);
 }

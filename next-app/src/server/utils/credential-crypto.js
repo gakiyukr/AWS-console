@@ -66,6 +66,10 @@ export async function decryptAwsCredentials(account, base64Key) {
 // 正式設定與 pending 暫存各一組，避免密文跨用途重放。
 const OIDC_SECRET_AAD = `aws-console-oidc-secret:v${KEY_VERSION}`;
 const PENDING_OIDC_SECRET_AAD = `aws-console-pending-oidc-secret:v${KEY_VERSION}`;
+// DDNS（Cloudflare API Token）同樣獨立成網域
+const DDNS_TOKEN_AAD = `aws-console-ddns-token:v${KEY_VERSION}`;
+// 人機驗證（Cap）簽章密鑰
+const CAPTCHA_SECRET_AAD = `aws-console-captcha-secret:v${KEY_VERSION}`;
 
 async function encryptSecretValue(secret, base64Key, aadDomain, requiredMessage) {
   if (typeof secret !== "string" || !secret) {
@@ -86,16 +90,21 @@ async function encryptSecretValue(secret, base64Key, aadDomain, requiredMessage)
 
 async function decryptSecretValue(record, base64Key, aadDomain, failureMessage) {
   try {
+    const ciphertext = record?.clientSecretCiphertext || record?.tokenCiphertext || record?.secretCiphertext;
+    const iv = record?.clientSecretIv || record?.tokenIv || record?.secretIv;
+    if (!ciphertext || !iv) {
+      throw new Error("缺少密文或 IV");
+    }
     const key = await importEncryptionKey(base64Key);
     const decrypted = await crypto.subtle.decrypt(
       {
         name: "AES-GCM",
-        iv: base64ToBytes(record.clientSecretIv),
+        iv: base64ToBytes(iv),
         additionalData: new TextEncoder().encode(aadDomain),
         tagLength: 128,
       },
       key,
-      base64ToBytes(record.clientSecretCiphertext),
+      base64ToBytes(ciphertext),
     );
     return new TextDecoder().decode(decrypted);
   } catch (error) {
@@ -132,5 +141,35 @@ export function decryptPendingOidcClientSecret(record, base64Key) {
     base64Key,
     PENDING_OIDC_SECRET_AAD,
     "暫存 OIDC Client Secret 解密失敗，請確認加密主金鑰未被更換",
+  );
+}
+
+/** 將 DDNS（Cloudflare API Token）加密為可寫入 D1 的欄位；回傳值不含明文。 */
+export function encryptDdnsToken(token, base64Key) {
+  return encryptSecretValue(token, base64Key, DDNS_TOKEN_AAD, "DDNS API Token 為必填");
+}
+
+/** 解密 ddns_settings 的 API Token；只有伺服器端 CF 呼叫可使用。 */
+export function decryptDdnsToken(record, base64Key) {
+  return decryptSecretValue(
+    record,
+    base64Key,
+    DDNS_TOKEN_AAD,
+    "DDNS API Token 解密失敗，請確認加密主金鑰未被更換",
+  );
+}
+
+/** 將人機驗證（Cap）簽章密鑰加密為可寫入 D1 的欄位；回傳值不含明文。 */
+export function encryptCaptchaSecret(secret, base64Key) {
+  return encryptSecretValue(secret, base64Key, CAPTCHA_SECRET_AAD, "人機驗證密鑰為必填");
+}
+
+/** 解密 captcha_settings 的簽章密鑰；只有伺服器端 Cap 呼叫可使用。 */
+export function decryptCaptchaSecret(record, base64Key) {
+  return decryptSecretValue(
+    record,
+    base64Key,
+    CAPTCHA_SECRET_AAD,
+    "人機驗證密鑰解密失敗，請確認加密主金鑰未被更換",
   );
 }

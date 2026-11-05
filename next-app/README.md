@@ -11,6 +11,9 @@
   可一頁綁一機或多機，冷卻時間由連結自訂（0 表示不限）。
 - 分享頁可自後台開啟 [Cap](https://trycap.dev/) 人機驗證（工作量證明）：
   訪客點擊「一鍵換 IP」前須先通過驗證，兌換憑證為一次性。
+- DDNS（Cloudflare）：設定頁配置 API Token 與 Zone 後，EC2 機器（非
+  Wavelength）可綁定主機名；換 IP／開關機成功後自動檢查並更新 DNS A 記錄
+  （DNS-only、TTL 60）。Token 加密存 D1（獨立 AAD 網域）。
 - EC2 與 Lightsail 完全分開：各自有機器總覽（`/ec2`、`/lightsail`）與
   新增機器表單（`/ec2/new`、`/lightsail/new`），首頁 `/` 轉址到 `/ec2`。
   機器以 `machines.platform`（ec2 / lightsail）區分，狀態查詢與電源操作
@@ -291,7 +294,14 @@ Lightsail 的一鍵開通另需 `lightsail:SetIpAddressType` 與 `lightsail:GetI
   challenge）與 `redeem`（驗證解答、防重放並簽發一次性憑證）。人機驗證未啟用時
   回 404；啟用但缺 `CAP_SECRET` 時回 503。
 - `/api/share-settings`：分享頁後台設定（守衛保護）——`GET` 回人機驗證開關與
-  `CAP_SECRET` 設置狀態；`PATCH` 更新開關，啟用時要求 secret 已設定（否則 400）。
+  密鑰設置狀態；`PATCH` 更新開關，啟用時要求密鑰已設定（否則 400）。
+- `/api/captcha-settings`：人機驗證（Cap）密鑰設定——`GET` 回配置狀態（密鑰不出
+  伺服器）、`PUT` 驗證長度後加密存 D1、`DELETE` 移除密鑰並自動停用人機驗證。
+- `/api/ddns-settings`：DDNS（Cloudflare）設定——`GET` 回設定狀態（Token 不出
+  伺服器）、`PUT` 驗證 Token 能存取指定 Zone 後加密儲存、`DELETE` 移除。
+- `/api/machines/:id/ddns`：機器綁定（PUT `{hostname}`，須為 Zone 子網域，
+  儲存後立即同步 A 記錄）與停用（DELETE，CF 記錄保留不刪）。僅 EC2，
+  Wavelength／Lightsail 回 400。
 - `/api/logs`：可依 `account_id`、`action`、`status`、`limit` 讀取稽核日誌。
 
 所有 `/api` 端點（SSO 登入流程、session 查詢與 `/api/share/:token/*` 公開
@@ -332,6 +342,11 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
   （EC2=opt-in 已啟用、Lightsail=完整清單）存入快取，開機器的區域下拉只讀
   快取（快取為空時自動回填 live）。更新點：建立帳號、開通區域成功、帳號頁
   手動重新整理。
+- `0012_ddns.sql`：DDNS（Cloudflare）設定表（API Token 加密、單列）與
+  machines 的 `ddns_hostname`／`ddns_record_id` 綁定欄位。換 IP／開關機成功
+  後自動同步 A 記錄；僅 EC2（非 Wavelength）。
+- `0013_captcha_settings.sql`：人機驗證（Cap）密鑰設定表（AES-256-GCM 加密、單列）。
+  設定頁配置後優先於環境變量 `CAP_SECRET`（保留為遷移相容 fallback）。
 
 ## 已知建置注意事項
 

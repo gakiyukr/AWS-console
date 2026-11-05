@@ -7,7 +7,7 @@ import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.j
 import {
   CAP_SCOPE,
   deriveCapTokenKey,
-  isCapSecretConfigured,
+  getCapSecret,
   isShareCaptchaEnabled,
 } from "@/server/utils/cap.js";
 import { consumeCapNonce, storeCapToken } from "@/server/utils/db.js";
@@ -18,13 +18,13 @@ export async function POST(request: Request): Promise<Response> {
   if (!await isShareCaptchaEnabled(env.DB)) {
     return errorResponse(404, "人機驗證未啟用。");
   }
-  const capSecret = env.CAP_SECRET;
-  if (!isCapSecretConfigured(env) || !capSecret) {
-    return errorResponse(503, "伺服器尚未設定人機驗證金鑰。");
+  const cap = await getCapSecret(env);
+  if (!cap) {
+    return errorResponse(503, "伺服器尚未設定人機驗證密鑰。");
   }
 
   const body = await readJsonBody(request);
-  const result = await validateChallenge(capSecret, body, {
+  const result = await validateChallenge(cap.secret, body, {
     scope: CAP_SCOPE,
     consumeNonce: (sigHex, ttlMs) => consumeCapNonce(env.DB, sigHex, ttlMs),
   });

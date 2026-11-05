@@ -22,6 +22,7 @@ export interface MachineRow {
   publicIpAddress: string | null
   publicDnsName: string | null
   ipv6Address: string | null
+  ddnsHostname: string | null
   awsAccountId: number | null
   awsAccountName: string | null
 }
@@ -32,6 +33,7 @@ export interface MachineTableActions {
   onReboot: (machine: MachineRow) => void
   onRebootIp: (machine: MachineRow) => void
   onIpv6: (machine: MachineRow) => void
+  onDdns: (machine: MachineRow) => void
   onTerminate: (machine: MachineRow) => void
   onRemove: (machine: MachineRow) => void
 }
@@ -101,7 +103,7 @@ export function MachineTable({
           {/* table-fixed + 每欄固定寬度：避免 auto layout 在窄螢幕把名稱、
               地區、狀態壓成折行，也避免寬螢幕把留白拉散。總寬小於容器時
               由 ScrollContainer 橫向捲動。 */}
-          <Table.Content aria-label="機器清單" className="min-w-[1720px] table-fixed">
+          <Table.Content aria-label="機器清單" className="min-w-[1780px] table-fixed">
             <Table.Header>
               <Table.Column isRowHeader className="w-[300px]">名稱</Table.Column>
               <Table.Column className="w-[130px]">地區</Table.Column>
@@ -110,21 +112,23 @@ export function MachineTable({
               <Table.Column className="w-[130px]">公網 IP</Table.Column>
               <Table.Column className="w-[190px]">IPv6</Table.Column>
               <Table.Column className="w-[250px]">DNS</Table.Column>
-              <Table.Column className="w-[450px]">操作</Table.Column>
+              <Table.Column className="w-[510px]">操作</Table.Column>
             </Table.Header>
             <Table.Body>
               {machines.map(machine => (
                 <Table.Row id={String(machine.id)} key={machine.id}>
                   <Table.Cell>
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate font-medium" title={machine.name}>
-                        {machine.name}
+                      <span className="min-w-0 flex-1 truncate font-mono font-medium" title={machine.instanceId}>
+                        {machine.instanceId}
                       </span>
                       {machine.isWavelength ? (
                         <Chip variant="secondary" size="sm">WL</Chip>
                       ) : null}
                     </div>
-                    <div className="truncate font-mono text-xs text-muted">{machine.instanceId}</div>
+                    <div className="truncate text-xs text-muted" title={machine.name || undefined}>
+                      {machine.name || "—"}
+                    </div>
                   </Table.Cell>
                   <Table.Cell>
                     <span className="whitespace-nowrap font-mono text-xs">{machine.region}</span>
@@ -221,6 +225,16 @@ export function MachineTable({
                           </Button>
                         </>
                       )}
+                      {platform === "ec2" && !machine.isWavelength ? (
+                        <Button
+                          variant={machine.ddnsHostname ? "primary" : "secondary"}
+                          size="sm"
+                          isDisabled={actionPendingId === machine.id}
+                          onPress={() => actions.onDdns(machine)}
+                        >
+                          DDNS
+                        </Button>
+                      ) : null}
                       <Button
                         variant="danger"
                         size="sm"

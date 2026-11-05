@@ -16,7 +16,7 @@ export async function GET(request: Request): Promise<Response> {
   const env = await getEnv();
   return jsonResponse({
     captchaEnabled: (await getAppSetting(env.DB, SHARE_CAPTCHA_ENABLED_KEY)) === "1",
-    captchaConfigured: isCapSecretConfigured(env),
+    captchaConfigured: await isCapSecretConfigured(env),
   });
 }
 
@@ -29,7 +29,7 @@ export async function PATCH(request: Request): Promise<Response> {
   if (!body || typeof body !== "object" || typeof body.captchaEnabled !== "boolean") {
     return errorResponse(400, "請求內容無效。");
   }
-  if (body.captchaEnabled && !isCapSecretConfigured(env)) {
+  if (body.captchaEnabled && !await isCapSecretConfigured(env)) {
     return errorResponse(400, "尚未設定 CAP_SECRET（至少 16 位元組），無法啟用人機驗證。");
   }
 
@@ -48,6 +48,6 @@ export async function PATCH(request: Request): Promise<Response> {
   return jsonResponse({
     ok: true,
     captchaEnabled: body.captchaEnabled,
-    captchaConfigured: isCapSecretConfigured(env),
+    captchaConfigured: await isCapSecretConfigured(env),
   });
 }

@@ -4,6 +4,7 @@
 // token 以明文儲存（URL 即憑證），因此清單隨時可複製完整連結；
 // 訪客側行為與冷卻機制見 /share/[token] 公開頁與 /api/share/* 端點。
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Copy, Link2, Loader2, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import { Chip } from "@/components/chip";
@@ -63,8 +64,6 @@ export default function ShareLinksPage() {
   const [deleting, setDeleting] = useState(false);
   // 後台設定：分享頁人機驗證（Cap）開關；null 代表仍在載入
   const [captchaEnabled, setCaptchaEnabled] = useState<boolean | null>(null);
-  const [captchaConfigured, setCaptchaConfigured] = useState(false);
-  const [captchaToggling, setCaptchaToggling] = useState(false);
 
   async function loadData() {
     try {
@@ -78,11 +77,10 @@ export default function ShareLinksPage() {
       if (!settingsResponse.ok) throw new Error("載入分享設定失敗");
       const linksPayload = await readJson<{ links?: ShareLinkRow[] }>(linksResponse);
       const machinesPayload = await readJson<MachineOption[]>(machinesResponse);
-      const settingsPayload = await readJson<{ captchaEnabled?: boolean; captchaConfigured?: boolean }>(settingsResponse);
+      const settingsPayload = await readJson<{ captchaEnabled?: boolean }>(settingsResponse);
       setLinks(linksPayload.links || []);
       setMachines(machinesPayload);
       setCaptchaEnabled(Boolean(settingsPayload.captchaEnabled));
-      setCaptchaConfigured(Boolean(settingsPayload.captchaConfigured));
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入分享連結失敗");
     } finally {
@@ -181,31 +179,6 @@ export default function ShareLinksPage() {
     toast.success("已複製分享連結");
   }
 
-  async function toggleCaptcha() {
-    if (captchaEnabled === null || captchaToggling) return;
-    setCaptchaToggling(true);
-    try {
-      const response = await fetch("/api/share-settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ captchaEnabled: !captchaEnabled }),
-      });
-      if (!response.ok) {
-        throw new Error(await readError(response));
-      }
-      const payload = await readJson<{ captchaEnabled?: boolean; captchaConfigured?: boolean }>(response);
-      setCaptchaEnabled(Boolean(payload.captchaEnabled));
-      if (typeof payload.captchaConfigured === "boolean") {
-        setCaptchaConfigured(payload.captchaConfigured);
-      }
-      toast.success(payload.captchaEnabled ? "訪客端人機驗證已啟用" : "訪客端人機驗證已關閉");
-    } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "更新人機驗證設定失敗");
-    } finally {
-      setCaptchaToggling(false);
-    }
-  }
-
   return (
     <div className="flex w-full flex-col gap-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -235,18 +208,16 @@ export default function ShareLinksPage() {
                 </div>
                 <p className="mt-1 max-w-xl text-sm text-muted">
                   啟用後訪客須通過 Cap（工作量證明）人機驗證才能點擊「一鍵換 IP」。
-                  {!captchaConfigured ? "尚未設定 Worker secret CAP_SECRET，無法啟用。" : ""}
+                  啟用開關與密鑰請到「設定」頁管理。
                 </p>
               </div>
             </div>
-            <Button
-              variant={captchaEnabled ? "secondary" : "primary"}
-              isDisabled={captchaToggling || (!captchaConfigured && !captchaEnabled)}
-              onPress={toggleCaptcha}
+            <Link
+              href="/settings"
+              className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-default"
             >
-              {captchaToggling ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-              {captchaEnabled ? "停用人機驗證" : "啟用人機驗證"}
-            </Button>
+              前往設定
+            </Link>
           </Card.Content>
         </Card>
       ) : null}

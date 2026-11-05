@@ -2,8 +2,17 @@
 // 原本六個頁面各自複製同一份實作，集中於此避免文案與行為漂移。
 import { toast } from "@heroui/react/toast";
 
-/** 以紅色 toast 顯示錯誤訊息 */
+let lastToastMessage = "";
+let lastToastTime = 0;
+
+/** 以紅色 toast 顯示錯誤訊息（含短時間防抖，避免多個非同步請求同時失敗時堆疊重複提示） */
 export function toastDanger(message: string) {
+  const now = Date.now();
+  if (message === lastToastMessage && now - lastToastTime < 1000) {
+    return;
+  }
+  lastToastMessage = message;
+  lastToastTime = now;
   toast(message, { variant: "danger" });
 }
 

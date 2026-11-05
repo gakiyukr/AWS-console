@@ -5,5 +5,11 @@
 import { ToastProvider as HeroUIToastProvider } from "@heroui/react/toast";
 
 export function ToastProvider() {
-  return <HeroUIToastProvider />;
+  return (
+    <HeroUIToastProvider
+      placement="top end"
+      maxVisibleToasts={3}
+      gap={8}
+    />
+  );
 }

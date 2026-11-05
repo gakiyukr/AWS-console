@@ -8,7 +8,7 @@ import { Clipboard, Download, Loader2, RefreshCw, Zap, Trash2 } from "lucide-rea
 import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
-import { readJson, toastDanger } from "@/lib/api-client";
+import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { regionLabel } from "@/lib/regions";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
@@ -80,6 +80,7 @@ export default function LightsailPage() {
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [loadingBlueprints, setLoadingBlueprints] = useState(false);
   const [loadingBundles, setLoadingBundles] = useState(false);
+  const [regionError, setRegionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [progress, setProgress] = useState<ProgressEntry[]>([]);
@@ -118,56 +119,64 @@ export default function LightsailPage() {
     }
   }
 
-  async function loadRegions(accountId: number | null) {
+  async function loadRegions(accountId: number | null, forceRefresh = false) {
     setRegions([]);
+    setRegionError(null);
     setForm(previous => ({ ...previous, region: "", blueprintId: "", bundleId: "" }));
     if (!accountId) return;
     try {
-      // 讀帳號的區域快取（建立帳號時建立）；快取為空會自動回填
-      const response = await fetch(`/api/accounts/${accountId}/regions/cache?platform=lightsail`);
-      if (!response.ok) throw new Error("載入 Lightsail Region 失敗");
+      // 讀帳號的區域快取（建立帳號時建立）；forceRefresh 或快取為空會自動抓 live 並回填
+      const url = `/api/accounts/${accountId}/regions/cache?platform=lightsail${forceRefresh ? "&refresh=1" : ""}`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<{ regions?: string[]; cached?: boolean }>(response);
       setRegions(payload.regions || []);
-      if (payload.cached === false) toast.success("首次讀取：已從 AWS 抓取並快取此帳號的區域清單");
-    } catch {
-      toastDanger("載入 Lightsail Region 失敗");
+      if (payload.cached === false && !forceRefresh) {
+        toast.success("首次讀取：已從 AWS 抓取並快取此帳號的區域清單");
+      } else if (forceRefresh) {
+        toast.success("已重新整理並更新可用區域清單");
+      }
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "載入 Lightsail Region 失敗");
     }
   }
 
-  async function loadBlueprints(accountId: number | null, region: string) {
+  async function loadRegionOptions(accountId: number | null, region: string) {
     setBlueprints([]);
-    setForm(previous => ({ ...previous, blueprintId: "" }));
+    setBundles([]);
+    setRegionError(null);
+    setForm(previous => ({ ...previous, blueprintId: "", bundleId: "" }));
     if (!accountId || !region) return;
+
     setLoadingBlueprints(true);
+    setLoadingBundles(true);
+
     try {
-      const response = await fetch(
-        `/api/lightsail/blueprints?account_id=${accountId}&region=${region}`,
-      );
-      if (!response.ok) throw new Error("載入 Blueprint 失敗");
-      const payload = await readJson<{ blueprints?: BlueprintOption[] }>(response);
-      setBlueprints(payload.blueprints || []);
-    } catch {
-      toastDanger("載入 Blueprint 失敗");
+      const [bpRes, bundleRes] = await Promise.all([
+        fetch(`/api/lightsail/blueprints?account_id=${accountId}&region=${region}`),
+        fetch(`/api/lightsail/bundles?account_id=${accountId}&region=${region}`),
+      ]);
+
+      if (!bpRes.ok || !bundleRes.ok) {
+        const errorMsg = !bpRes.ok ? await readError(bpRes) : await readError(bundleRes);
+        setRegionError(errorMsg);
+        toastDanger(errorMsg);
+        return;
+      }
+
+      const [bpData, bundleData] = await Promise.all([
+        readJson<{ blueprints?: BlueprintOption[] }>(bpRes),
+        readJson<{ bundles?: BundleOption[] }>(bundleRes),
+      ]);
+
+      setBlueprints(bpData.blueprints || []);
+      setBundles(bundleData.bundles || []);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "載入區域選項失敗";
+      setRegionError(msg);
+      toastDanger(msg);
     } finally {
       setLoadingBlueprints(false);
-    }
-  }
-
-  async function loadBundles(accountId: number | null, region: string) {
-    setBundles([]);
-    setForm(previous => ({ ...previous, bundleId: "" }));
-    if (!accountId || !region) return;
-    setLoadingBundles(true);
-    try {
-      const response = await fetch(
-        `/api/lightsail/bundles?account_id=${accountId}&region=${region}`,
-      );
-      if (!response.ok) throw new Error("載入 Bundle 失敗");
-      const payload = await readJson<{ bundles?: BundleOption[] }>(response);
-      setBundles(payload.bundles || []);
-    } catch {
-      toastDanger("載入 Bundle 失敗");
-    } finally {
       setLoadingBundles(false);
     }
   }
@@ -285,9 +294,12 @@ export default function LightsailPage() {
     setForm(previous => ({ ...previous, instanceName: "" }));
   }
 
-  function reloadOptions() {
-    void loadInitialOptions();
+  async function reloadOptions() {
     void loadSshKeys();
+    await loadInitialOptions();
+    if (form.accountId) {
+      await loadRegions(form.accountId, true);
+    }
   }
 
 
@@ -337,7 +349,20 @@ export default function LightsailPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium">Region</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-sm font-medium">Region</label>
+              {form.accountId ? (
+                <button
+                  type="button"
+                  onClick={() => form.accountId && void loadRegions(form.accountId, true)}
+                  className="flex items-center gap-1 text-xs text-muted hover:text-foreground transition-colors"
+                  title="從 AWS 重新抓取此帳號已開通的區域清單"
+                >
+                  <RefreshCw size={12} />
+                  <span>重新整理區域</span>
+                </button>
+              ) : null}
+            </div>
             <CustomSelect
               value={form.region}
               placeholder="請選擇 Region"
@@ -348,10 +373,7 @@ export default function LightsailPage() {
               onChange={async (region) => {
                 setForm(previous => ({ ...previous, region, blueprintId: "", bundleId: "" }));
                 if (region && form.accountId) {
-                  await Promise.all([
-                    loadBlueprints(form.accountId, region),
-                    loadBundles(form.accountId, region),
-                  ]);
+                  await loadRegionOptions(form.accountId, region);
                 }
               }}
               disabled={!form.accountId || busy}
@@ -385,6 +407,15 @@ export default function LightsailPage() {
               disabled={!form.region || loadingBundles || busy}
             />
           </div>
+
+          {regionError && (
+            <div className="rounded-md border border-danger/30 bg-danger/10 p-3 text-xs text-danger sm:col-span-2">
+              <p className="font-medium">⚠️ {regionError}</p>
+              <p className="mt-1 text-danger/80">
+                若尚未開通該區域，請至 <Link href="/accounts" className="underline font-semibold hover:text-danger">帳號管理</Link> 開通該區域，開通後點擊上方「重新整理區域」。
+              </p>
+            </div>
+          )}
 
           <div className="sm:col-span-2">
             <Label htmlFor="lightsail-name" className="mb-1.5 block text-sm font-medium">執行個體名稱</Label>

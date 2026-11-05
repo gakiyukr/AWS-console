@@ -4,6 +4,7 @@
 //   - 使用 Blueprint（作業系統映像）與 Bundle（規格方案）
 //   - 內建靜態 IP 分配與防火牆規則管理
 import { AwsRequestError, encodeLightsailUserData, lightsailQuery } from "./aws-lightsail.js";
+import { listEc2Regions } from "./wavelength.js";
 
 /** @typedef {(stage: string, details?: Record<string, unknown>) => void} ProgressReporter */
 
@@ -22,9 +23,21 @@ class LightsailError extends Error {
  * 取得 Lightsail 可用 Region 清單。
  */
 export async function listLightsailRegions(awsEnv) {
-  // Lightsail GetRegions 可從任意 region 呼叫，使用 us-east-1 作為預設端點
+  // 1. Lightsail GetRegions 可從任意 region 呼叫，使用 us-east-1 作為預設端點
   const response = await lightsailQuery("us-east-1", awsEnv, "GetRegions", {});
-  return (response.regions || []).map((region) => region.name).filter(Boolean);
+  const lightsailRegions = (response.regions || []).map((region) => region.name).filter(Boolean);
+
+  // 2. 交叉過濾帳號實際已開通的 Region（排除 not-opted-in 區域）
+  try {
+    const enabledRegions = await listEc2Regions(awsEnv);
+    if (Array.isArray(enabledRegions) && enabledRegions.length > 0) {
+      const enabledSet = new Set(enabledRegions);
+      return lightsailRegions.filter((r) => enabledSet.has(r));
+    }
+  } catch {
+    // 若 EC2 DescribeRegions 查詢失敗，退回原始清單
+  }
+  return lightsailRegions;
 }
 
 /**

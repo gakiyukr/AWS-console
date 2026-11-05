@@ -53,9 +53,12 @@ export async function GET(
     return jsonResponse(httpError.body, { status: httpError.status });
   }
 
-  const cached = await listCachedRegions(env.DB, accountId, platformParam);
-  if (cached.length > 0) {
-    return jsonResponse({ regions: cached, cached: true });
+  const forceRefresh = new URL(request.url).searchParams.get("refresh") === "1";
+  if (!forceRefresh) {
+    const cached = await listCachedRegions(env.DB, accountId, platformParam);
+    if (cached.length > 0) {
+      return jsonResponse({ regions: cached, cached: true });
+    }
   }
 
   // backfill=0：唯讀模式（帳號管理頁顯示用），快取為空就不打 AWS

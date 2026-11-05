@@ -160,10 +160,25 @@ export async function lightsailQuery(region, env, operation, params = {}) {
         // 無法解析 JSON 時保留預設錯誤訊息
       }
 
+      // 檢查是否為 opt-in 區域未開通錯誤
+      if (
+        errorCode === "UnrecognizedClientException" ||
+        errorCode === "RegionDisabledException" ||
+        errorCode === "AuthFailure" ||
+        errorMessage.includes("security token") ||
+        errorMessage.includes("not enabled for this account") ||
+        errorMessage.includes("STS is not activated")
+      ) {
+        errorMessage = `AWS Region ${region} 尚未開通或此帳號未獲授權使用此區域。請至「帳號管理」開通該區域。`;
+      }
+
       throw new AwsRequestError(
         `Lightsail ${operation} 失敗：${errorMessage}`,
-        response.status >= 500 ? 502 : 400,
-        { code: errorCode, httpStatus: response.status },
+        {
+          code: errorCode,
+          statusCode: response.status >= 500 ? 502 : 400,
+          httpStatus: response.status,
+        },
       );
     }
 

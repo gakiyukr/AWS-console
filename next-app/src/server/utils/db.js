@@ -738,3 +738,111 @@ export async function activatePendingSsoSetup(db, id, encryptionKey, now = Date.
     throw error;
   }
 }
+
+// ─── OCI 帳號管理 ───────────────────────────────────────────────
+
+const OCI_ACCOUNT_COLUMNS = "id, name, tenancy_ocid AS tenancyOcid, user_ocid AS userOcid, fingerprint, region, compartment_ocid AS compartmentOcid, key_ciphertext AS keyCiphertext, key_iv AS keyIv, key_hint AS keyHint, encryption_key_version AS encryptionKeyVersion, enabled, is_default AS isDefault, last_verified_at AS lastVerifiedAt, created_at AS createdAt, updated_at AS updatedAt";
+
+function normalizeOciAccount(row) {
+  return row ? { ...row, enabled: Boolean(row.enabled), isDefault: Boolean(row.isDefault) } : null;
+}
+
+export async function listOciAccounts(db) {
+  const { results } = await db.prepare(`SELECT ${OCI_ACCOUNT_COLUMNS} FROM oci_accounts ORDER BY id`).all();
+  return results.map(normalizeOciAccount);
+}
+
+export async function getOciAccountById(db, id) {
+  return normalizeOciAccount(await db.prepare(`SELECT ${OCI_ACCOUNT_COLUMNS} FROM oci_accounts WHERE id = ?1`).bind(id).first());
+}
+
+export async function getDefaultOciAccount(db) {
+  return normalizeOciAccount(await db.prepare(`SELECT ${OCI_ACCOUNT_COLUMNS} FROM oci_accounts WHERE is_default = 1`).first());
+}
+
+export async function createOciAccount(db, account) {
+  const existing = await listOciAccounts(db);
+  if (existing.length === 0 && account.enabled === false)
+    throw new Error("第一個 OCI 帳號必須保持啟用");
+  if (existing.some(item => item.name === account.name))
+    return null;
+  const isDefault = account.isDefault || existing.length === 0;
+  if (isDefault)
+    await db.prepare("UPDATE oci_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1").run();
+  try {
+    const result = await db.prepare(`INSERT INTO oci_accounts
+      (name, tenancy_ocid, user_ocid, fingerprint, region, compartment_ocid,
+       key_ciphertext, key_iv, key_hint, encryption_key_version, enabled, is_default)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`)
+      .bind(
+        account.name,
+        account.tenancyOcid,
+        account.userOcid,
+        account.fingerprint,
+        account.region,
+        account.compartmentOcid,
+        account.keyCiphertext,
+        account.keyIv,
+        account.keyHint,
+        account.encryptionKeyVersion,
+        account.enabled === false ? 0 : 1,
+        isDefault ? 1 : 0,
+      )
+      .run();
+    return getOciAccountById(db, result.meta.last_row_id);
+  } catch (error) {
+    if (String(error?.message || error).includes("UNIQUE"))
+      return null;
+    throw error;
+  }
+}
+
+export async function updateOciAccount(db, id, account) {
+  const existing = await listOciAccounts(db);
+  if (existing.some(item => item.id !== id && item.name === account.name))
+    return null;
+  if (account.isDefault)
+    await db.prepare("UPDATE oci_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1").run();
+  const result = await db.prepare(`UPDATE oci_accounts SET
+    name = ?2, tenancy_ocid = ?3, user_ocid = ?4, fingerprint = ?5, region = ?6,
+    compartment_ocid = ?7, key_ciphertext = ?8, key_iv = ?9, key_hint = ?10,
+    encryption_key_version = ?11, enabled = ?12, is_default = ?13, updated_at = datetime('now')
+    WHERE id = ?1`)
+    .bind(
+      id,
+      account.name,
+      account.tenancyOcid,
+      account.userOcid,
+      account.fingerprint,
+      account.region,
+      account.compartmentOcid,
+      account.keyCiphertext,
+      account.keyIv,
+      account.keyHint,
+      account.encryptionKeyVersion,
+      account.enabled ? 1 : 0,
+      account.isDefault ? 1 : 0,
+    )
+    .run();
+  return (result.meta.changes ?? 0) > 0 ? getOciAccountById(db, id) : null;
+}
+
+export async function markOciAccountVerified(db, id) {
+  await db.prepare("UPDATE oci_accounts SET last_verified_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1").bind(id).run();
+}
+
+/**
+ * 刪除 OCI 帳號。
+ */
+export async function deleteOciAccount(db, id) {
+  const account = await getOciAccountById(db, id);
+  if (!account)
+    return { deleted: false, reason: "not_found" };
+  const result = await db.prepare("DELETE FROM oci_accounts WHERE id = ?1").bind(id).run();
+  if (account.isDefault) {
+    const next = (await listOciAccounts(db)).find(item => item.enabled);
+    if (next)
+      await db.prepare("UPDATE oci_accounts SET is_default = 1, updated_at = datetime('now') WHERE id = ?1").bind(next.id).run();
+  }
+  return { deleted: (result.meta.changes ?? 0) > 0 };
+}

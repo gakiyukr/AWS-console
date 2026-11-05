@@ -1,9 +1,13 @@
-// 輸入驗證器：合併兩個主控台的正則全集，供 machines CRUD 與
-// wavelength 部署端點共用。全部回傳 { valid, error } 而非拋錯，
+// 輸入驗證器：合併 AWS 與 OCI 的正則全集，供 machines CRUD、
+// wavelength 部署與 OCI API 管理端點共用。全部回傳 { valid, error } 而非拋錯，
 // 讓路由層能直接映射為 400 回應。
 
+const OCID_PART = "[a-z0-9-]+";
+const OCID_REGION = "[a-z0-9-]+";
+
 const INPUT_VALIDATORS = {
-  region: /^[a-z]{2}(-[a-z]+)*-\d{1}$/,
+  // AWS 驗證器
+  region: /^[a-z]{2}(-[a-z]+)*-\d+$/,
   // Wavelength Zone 命名為 <region>-wl<N>-<機場代碼>-wlz-<序號>，例如
   // ap-northeast-1-wl1-kix-wlz-1；region 段本身可能含多組字母段落（us-gov-west-1）。
   zone: /^[a-z]{2}(-[a-z]+)*-\d+-wl\d+-[a-z]{3}-wlz-?\d+$/,
@@ -16,9 +20,22 @@ const INPUT_VALIDATORS = {
   // subnet 與 SG ID 同為 8 字元前綴 + 十七位十六進位的 AWS ID 形態
   subnetId: /^subnet-[0-9a-f]{1,17}$/,
   securityGroupId: /^sg-[0-9a-f]{1,17}$/,
+
+  // OCI 驗證器
+  // OCID 通用形態：ocid1.<type>.<realm>[.<region>][.<future>]..<unique-id>
+  ocid: new RegExp(`^ocid1\\.${OCID_PART}\\.${OCID_PART}(\\.${OCID_REGION})?(\\.${OCID_PART})?\\.[a-zA-Z0-9]+$`, "i"),
+  tenancyOcid: /^ocid1\.tenancy\.oc1\.[a-zA-Z0-9]+$/,
+  userOcid: /^ocid1\.user\.oc1\.[a-zA-Z0-9]+$/,
+  compartmentOcid: /^ocid1\.compartment\.oc1\.[a-zA-Z0-9]+$/,
+  instanceOcid: /^ocid1\.instance\.oc1\.[a-zA-Z0-9]+$/,
+  vcnOcid: /^ocid1\.vcn\.oc1\.[a-zA-Z0-9]+$/,
+  // API key 指紋：OCI 主控台顯示為 aa:bb:cc:… 共 10 組兩位十六進位
+  fingerprint: /^[0-9a-f]{2}(:[0-9a-f]{2}){9}$/,
+  // shape 名稱如 VM.Standard.A1.Flex、VM.Standard.E2.1.Micro
+  shape: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
 };
 
-const MAX_STRING_LENGTH = 256;
+const MAX_STRING_LENGTH = 1024;
 
 /**
  * 驗證字串輸入。

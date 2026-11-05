@@ -62,6 +62,57 @@ export async function decryptAwsCredentials(account, base64Key) {
   }
 }
 
+// OCI 憑證獨立 AAD 網域
+const OCI_CREDENTIALS_AAD = new TextEncoder().encode(`oci-console-credentials:v${KEY_VERSION}`);
+
+/** 將 OCI API 簽章私鑰（PEM）加密為可寫入 D1 的欄位；回傳值不包含明文。 */
+export async function encryptOciCredentials(credentials, base64Key) {
+  const payload = {
+    privateKeyPem: String(credentials.privateKeyPem || "").trim(),
+  };
+  if (!payload.privateKeyPem) {
+    throw new Error("PEM 私鑰為必填");
+  }
+
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await importEncryptionKey(base64Key);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData: OCI_CREDENTIALS_AAD, tagLength: 128 },
+    key,
+    new TextEncoder().encode(JSON.stringify(payload)),
+  );
+  return {
+    keyCiphertext: bytesToBase64(new Uint8Array(encrypted)),
+    keyIv: bytesToBase64(iv),
+    encryptionKeyVersion: KEY_VERSION,
+  };
+}
+
+/** 解密 D1 帳號資料；只有伺服器端 OCI 呼叫可使用此函式。 */
+export async function decryptOciCredentials(account, base64Key) {
+  if (Number(account.encryptionKeyVersion) !== KEY_VERSION) {
+    throw new Error("不支援此 OCI 憑證的加密版本");
+  }
+  try {
+    const key = await importEncryptionKey(base64Key);
+    const decrypted = await crypto.subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: base64ToBytes(account.keyIv),
+        additionalData: OCI_CREDENTIALS_AAD,
+        tagLength: 128,
+      },
+      key,
+      base64ToBytes(account.keyCiphertext),
+    );
+    return JSON.parse(new TextDecoder().decode(decrypted));
+  } catch (error) {
+    if (String(error?.message || "").includes("CREDENTIAL_ENCRYPTION_KEY"))
+      throw error;
+    throw new Error("OCI 憑證解密失敗，請確認加密主金鑰未被更換");
+  }
+}
+
 // OIDC client secret 使用獨立 AAD 網域，與 AWS 憑證密文隔離；
 // 正式設定與 pending 暫存各一組，避免密文跨用途重放。
 const OIDC_SECRET_AAD = `aws-console-oidc-secret:v${KEY_VERSION}`;

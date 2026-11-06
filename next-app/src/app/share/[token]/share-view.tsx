@@ -16,6 +16,7 @@ import { Card } from "@heroui/react/card";
 import { Modal } from "@heroui/react/modal";
 import { readDeploymentStream } from "@/lib/deployment-stream";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
+import { stateBadgeVariant, stateLabel } from "@/lib/machine-display";
 
 // SSE stage 代碼 → 訪客可讀標籤（與後端 rotatePublicIp 的進度對齊）
 const STAGE_LABELS: Record<string, string> = {
@@ -264,25 +265,6 @@ function LinkGone() {
       <p className="mt-3 text-sm text-muted">此分享連結不存在，或已被擁有者停用。</p>
     </div>
   );
-}
-
-// 狀態標籤配色：運行中強調、已停止中性、其餘（含查詢失敗）柔和
-function stateBadgeVariant(state: string | null) {
-  if (state === "running") return "primary" as const;
-  if (state === "stopped" || state === "stopping") return "secondary" as const;
-  return "soft" as const;
-}
-
-function stateLabel(state: string | null) {
-  const labels: Record<string, string> = {
-    running: "運行中",
-    stopped: "已停止",
-    pending: "啟動中",
-    stopping: "停止中",
-    "shutting-down": "關閉中",
-    terminated: "已終止",
-  };
-  return state ? labels[state] || state : "未知";
 }
 
 function formatRemaining(ms: number) {

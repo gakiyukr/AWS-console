@@ -16,8 +16,9 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
+import { readJson } from "@/lib/api-client";
 import { usePathname } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 const navigation = [
   { href: "/", label: "總覽", icon: LayoutDashboard },
@@ -33,6 +34,27 @@ const navigation = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  // 側欄使用者資訊：查詢 /api/session 帶出登入 email；未登入時顯示佔位
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch("/api/session");
+        if (!response.ok) return;
+        const payload = await readJson<{ authenticated?: boolean; user?: { email: string } | null }>(response);
+        if (!cancelled && payload.authenticated) {
+          setUserEmail(payload.user?.email || null);
+        }
+      } catch {
+        // session 查詢失敗不影響導覽
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -95,11 +117,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="border-t border-divider p-3">
           <div className="flex items-center gap-3 rounded-lg px-2 py-2">
             <span className="grid size-9 place-items-center rounded-full bg-default text-sm font-semibold">
-              G
+              {userEmail ? userEmail.slice(0, 1).toUpperCase() : "?"}
             </span>
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium">SSO 使用者</p>
-              <p className="truncate text-xs text-muted">尚未連接 session</p>
+              <p className="truncate text-sm font-medium">{userEmail || "SSO 使用者"}</p>
+              <p className="truncate text-xs text-muted">{userEmail ? "已登入" : "尚未連接 session"}</p>
             </div>
           </div>
         </div>
@@ -118,7 +140,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Menu aria-hidden="true" size={20} />
           </Button>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm text-muted">Cloud 主控台</p>
+            <p className="truncate text-sm text-muted">Cloud Console</p>
           </div>
           <span className="text-xs text-muted">生產環境</span>
         </header>

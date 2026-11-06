@@ -148,7 +148,7 @@ function SetupContent() {
     <main className="grid min-h-dvh place-items-center px-6 py-12">
       <div className="grid w-full max-w-lg gap-6">
         <div className="grid gap-2 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">歡迎使用 AWS 主控台</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">歡迎使用 Cloud Console</h1>
           <p className="text-balance text-sm text-muted">
             首次執行初始設定：綁定你的 SSO 帳號，完成後即可進入主控台
           </p>

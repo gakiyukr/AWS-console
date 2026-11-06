@@ -1,6 +1,6 @@
-# AWS 主控台
+# Cloud Console
 
-單一 Cloudflare Worker 的 AWS 主控台（EC2 電源管理、Wavelength／一般 EC2 部署、多 AWS 帳號管理、OIDC SSO 登入，並可發布對外的「一鍵換 IP」分享頁），完整程式與文件都在 [`next-app/`](./next-app/README.md)。
+單一 Cloudflare Worker 的多雲主控台 Cloud Console（AWS EC2 電源管理、Wavelength／一般 EC2 部署、Oracle Cloud OCI 執行個體與網路、多帳號管理、OIDC SSO 登入、出口代理池、DDNS，並可發布對外的「一鍵換 IP」分享頁），完整程式與文件都在 [`next-app/`](./next-app/README.md)。
 
 ## 部署
 

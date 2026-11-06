@@ -15,6 +15,7 @@ import { regionLabel } from "@/lib/regions";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { CustomSelect } from "@/components/ui/select";
 
 // ─── AWS 帳號定義 ───────────────────────────────────────────
 
@@ -722,22 +723,20 @@ export default function AccountsPage() {
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="aws-account-proxy" className="text-sm font-medium">出口代理（選填）</Label>
-                      <select
-                        id="aws-account-proxy"
-                        className="h-9 rounded-md border bg-background px-3 text-sm"
-                        value={accountForm.proxyId ?? ""}
-                        onChange={event => setAccountForm(previous => ({
+                      <CustomSelect
+                        value={accountForm.proxyId ? String(accountForm.proxyId) : ""}
+                        onChange={value => setAccountForm(previous => ({
                           ...previous,
-                          proxyId: event.target.value ? Number(event.target.value) : null,
+                          proxyId: value ? Number(value) : null,
                         }))}
-                      >
-                        <option value="">不使用（直連）</option>
-                        {proxyOptions.map(proxy => (
-                          <option key={proxy.id} value={proxy.id}>
-                            {proxy.name}（{proxy.protocol}://{proxy.host}:{proxy.port}）
-                          </option>
-                        ))}
-                      </select>
+                        options={[
+                          { value: "", label: "不使用（直連）" },
+                          ...proxyOptions.map(proxy => ({
+                            value: String(proxy.id),
+                            label: `${proxy.name}（${proxy.protocol}://${proxy.host}:${proxy.port}）`,
+                          })),
+                        ]}
+                      />
                       <p className="text-xs text-muted">
                         綁定後此帳號的所有 API 呼叫改由該代理出口；代理節點在「設定」頁管理。
                       </p>
@@ -942,19 +941,17 @@ export default function AccountsPage() {
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="oci-account-proxy" className="text-sm font-medium">出口代理（選填）</Label>
-                      <select
-                        id="oci-account-proxy"
-                        className="h-9 rounded-md border bg-background px-3 text-sm"
-                        value={ociAccountForm.proxyId ?? ""}
-                        onChange={event => updateOciField("proxyId", event.target.value ? Number(event.target.value) : null)}
-                      >
-                        <option value="">不使用（直連）</option>
-                        {proxyOptions.map(proxy => (
-                          <option key={proxy.id} value={proxy.id}>
-                            {proxy.name}（{proxy.protocol}://{proxy.host}:{proxy.port}）
-                          </option>
-                        ))}
-                      </select>
+                      <CustomSelect
+                        value={ociAccountForm.proxyId ? String(ociAccountForm.proxyId) : ""}
+                        onChange={value => updateOciField("proxyId", value ? Number(value) : null as unknown as string)}
+                        options={[
+                          { value: "", label: "不使用（直連）" },
+                          ...proxyOptions.map(proxy => ({
+                            value: String(proxy.id),
+                            label: `${proxy.name}（${proxy.protocol}://${proxy.host}:${proxy.port}）`,
+                          })),
+                        ]}
+                      />
                       <p className="text-xs text-muted">
                         綁定後此帳號的所有 OCI API 呼叫改由該代理出口。
                       </p>

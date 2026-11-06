@@ -975,7 +975,7 @@ export default function SettingsPage() {
                             })();
                           }}
                         >
-                          {proxyDeleting === item.id ? <Loader2 aria-hidden size={16} className="animate-spin" /> : "測試"}
+                          {proxyTesting ? <Loader2 aria-hidden size={16} className="animate-spin" /> : "測試"}
                         </Button>
                         <Button
                           variant="ghost"

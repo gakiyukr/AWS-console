@@ -53,7 +53,7 @@ function SignInContent() {
             <CloudCog aria-hidden="true" size={22} />
           </span>
           <div>
-            <p className="text-lg font-semibold">AWS 主控台</p>
+            <p className="text-lg font-semibold">Cloud Console</p>
             <p className="text-xs text-white/60">雲端基礎設施管理</p>
           </div>
         </div>
@@ -82,7 +82,7 @@ function SignInContent() {
             <span className="mx-auto grid size-12 place-items-center rounded-xl bg-accent text-accent-foreground lg:hidden">
               <CloudCog aria-hidden="true" size={24} />
             </span>
-            <h1 className="text-2xl font-semibold tracking-tight">登入 AWS 主控台</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">登入 Cloud Console</h1>
             <p className="text-balance text-sm text-muted">透過 SSO 驗證身分以繼續</p>
           </div>
           {errorMessage ? (

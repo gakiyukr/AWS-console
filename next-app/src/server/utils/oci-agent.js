@@ -182,7 +182,7 @@ export async function pollCommandExecution(ctx, {
       execution = await getInstanceAgentCommandExecution(ctx, { commandId, instanceId });
     } catch (error) {
       // 剛送出前幾秒可能回 404 NotAuthorizedOrNotFound（Agent 尚未向中心回報），容忍前三次重試
-      if (attempt <= 3 && error instanceof OciApiError && error.status === 404) {
+      if (attempt <= 3 && error instanceof OciApiError && error.statusCode === 404) {
         emit?.({ stage: "agent-exec", message: `等待 Cloud Agent 接收指令（重試 ${attempt}/${maxAttempts}）…` });
         await delay(pollIntervalMs);
         continue;

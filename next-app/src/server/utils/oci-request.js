@@ -14,6 +14,10 @@ export function ociEndpoint(region) {
   return `https://iaas.${region}.oraclecloud.com`;
 }
 
+// 單一 OCI 請求的逾時上限（毫秒）。Run Command 等建立類呼叫也是即時回應，
+// 長時間等待一律由各模組的輪詢次數上限承擔，而非單一請求無限等待。
+const OCI_FETCH_TIMEOUT_MS = 30_000;
+
 // ─── PEM 解析 ───────────────────────────────────────────────
 
 /**
@@ -199,18 +203,26 @@ export async function ociSignedFetch(options) {
     headers["content-length"] = String(new TextEncoder().encode(bodyText ?? "").byteLength);
   }
 
+  // 單一請求逾時：OCI API 正常在數秒內回應；無此守門時 fetch 可能無限等待。
+  // 注意：經 Workers 代理（cloudflare:sockets 隧道）時此 signal 無法中止
+  // 手寫的讀寫迴圈，僅直連與 Node 代理路徑受控。
+  const fetchOptions = {
+    method,
+    headers,
+    body: isBodyMethod ? bodyText : undefined,
+    signal: AbortSignal.timeout(OCI_FETCH_TIMEOUT_MS),
+  };
+
   let response;
   try {
-    const fetchOptions = {
-      method,
-      headers,
-      body: isBodyMethod ? bodyText : undefined,
-    };
     response = account?.proxy
       ? await fetchViaProxy(url, fetchOptions, account.proxy)
       : await fetch(url, fetchOptions);
   } catch (err) {
     if (err instanceof OciApiError) throw err;
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new OciApiError(`OCI API 請求逾時（${OCI_FETCH_TIMEOUT_MS / 1000} 秒）`, 504, { retryable: true });
+    }
     throw new OciApiError(`無法連上 OCI API（${url.host}）：${err?.message || ""}`, 502);
   }
   if (!response.ok) {

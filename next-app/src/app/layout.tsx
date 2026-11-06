@@ -5,10 +5,10 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "AWS 主控台",
-    template: "%s - AWS 主控台",
+    default: "Cloud Console",
+    template: "%s - Cloud Console",
   },
-  description: "管理 EC2 與 Wavelength 部署及電源狀態。",
+  description: "管理 AWS（EC2／Lightsail）與 Oracle Cloud（OCI）執行個體的部署、電源與網路設定。",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -1,6 +1,6 @@
-# AWS 主控台
+# Cloud Console（AWS + Oracle Cloud 多雲主控台）
 
-單一 Cloudflare Worker 的 AWS 主控台：Next.js 16 App Router + React 19 + HeroUI 3，以 [OpenNext for Cloudflare](https://opennext.js.org/cloudflare) 打包部署，資料儲存於 Cloudflare D1。
+單一 Cloudflare Worker 的多雲主控台：Next.js 16 App Router + React 19 + HeroUI 3，以 [OpenNext for Cloudflare](https://opennext.js.org/cloudflare) 打包部署，資料儲存於 Cloudflare D1。管理 AWS（EC2／Lightsail／Wavelength）與 Oracle Cloud（OCI 執行個體／保留 IP）的部署、電源與網路設定。
 
 ## 功能
 
@@ -9,8 +9,11 @@
   以及「更換公網 IP」（stop → start）。
 - 以「分享連結」對外發布免登入的公開網頁，讓訪客對綁定機器一鍵更換公網 IP；
   可一頁綁一機或多機，冷卻時間由連結自訂（0 表示不限）。
-- 分享頁可自後台開啟 [Cap](https://trycap.dev/) 人機驗證（工作量證明）：
-  訪客點擊「一鍵換 IP」前須先通過驗證，兌換憑證為一次性。
+- 分享頁可自後台開啟人機驗證，支援多渠道備援：[Cap](https://trycap.dev/)
+  （自架實例）、Cloudflare Turnstile、hCaptcha；訪客點擊「一鍵換 IP」前須先
+  通過驗證，憑證由伺服端 siteverify 驗證。渠道與密鑰於設定後臺管理（加密存 D1）。
+- 出口代理池（HTTP／HTTPS／SOCKS5）：可為個別 AWS／OCI 帳號綁定出口代理，
+  該帳號的所有雲端 API 呼叫改由代理出口（Workers 走 cloudflare:sockets 隧道）。
 - DDNS（Cloudflare）：設定頁配置 API Token 與 Zone 後，EC2 機器（非
   Wavelength）可綁定主機名；換 IP／開關機成功後自動檢查並更新 DNS A 記錄
   （DNS-only、TTL 60）。Token 加密存 D1（獨立 AAD 網域）。
@@ -19,6 +22,11 @@
   機器以 `machines.platform`（ec2 / lightsail）區分，狀態查詢與電源操作
   依平台分流（Lightsail 走 GetInstances／StartInstance／StopInstance／
   RebootInstance／DeleteInstance）；Lightsail 不支援「更換公網 IP」。
+- Oracle Cloud（OCI）整合：執行個體列表（即時 + 自訂別名）、五種電源操作
+  （含強制關機／重啟）、更換臨時公網 IP、一鍵 IPv6（VCN /56 → 子網 /64 →
+  路由 → 安全清單 → VNIC 指派）、一鍵防火牆（Security List 全開 + 主機
+  iptables 清理）、保留公網 IP 申請／綁定／釋放、建立執行個體（A1.Flex 上限、
+  shape 過濾映像）。多 OCI 帳號以 API 簽章金鑰（PEM 加密）管理。
 - 建立及初始化 AWS Wavelength Zone 所需的子網、Carrier Gateway、路由表與安全群組。
 - 以獨立工作流部署一般區域 EC2、Wavelength 執行個體、Lightsail 執行個體與 SSH forwarder。
 - 部署一般 EC2 時可選用 IPv6（完整開通 VPC/子網 CIDR、IGW 路由與安全群組規則）；
@@ -38,18 +46,20 @@ next-app/
 │   │                    #   new/ 為新增機器，內含切換分頁：一般 EC2 ↔ Wavelength EC2
 │   ├── lightsail/       # Lightsail 機器總覽；new/ 為新增機器表單
 │   ├── wavelength/      # 舊網址轉址到 /ec2/new/wavelength
-│   ├── accounts/        # AWS 帳號管理
+│   ├── instances/       # OCI 執行個體總覽（9 操作）；new/ 為建立表單
+│   ├── reserved-ips/    # OCI 保留公網 IP 管理
+│   ├── accounts/        # AWS／OCI 帳號管理（分頁）
 │   ├── logs/            # 稽核日誌
 │   ├── share/           # 分享連結管理（對外一鍵換 IP）
-│   └── settings/        # SSH 公鑰管理
+│   └── settings/        # SSH 公鑰、DDNS、人機驗證、出口代理池
 ├── src/app/login/、setup/  # 登入頁與 OOBE 初始設定
 ├── src/app/share/[token]/  # 公開分享頁（免登入，token 即憑證）
 ├── src/app/api/         # API 路由（見下方「API 範圍」）
 ├── src/server/          # 守衛（page-guard、api-guard）與後端工具層
 ├── src/lib/             # 前後端共用：regions、ssh-keys、deployment-stream、
-│                        #   use-machines（總覽頁共用邏輯）、machine-display
-├── src/components/      # AppShell、MachineTable（兩平台共用表格）、
-│                        #   ConfirmDialog、Chip、NoSsr 等共用元件
+│                        #   use-machines（AWS 總覽共用邏輯）、machine-display、ocid
+├── src/components/      # AppShell、MachineTable、ConfirmDialog、Chip、NoSsr、
+│                        #   ui/（Radix 化 select/switch/checkbox/input/label/textarea）
 ├── server/db/migrations # D1 migrations（wrangler.jsonc 引用）
 ├── wrangler.jsonc       # Worker 設定（正式名稱 aws-console、D1 binding）
 └── open-next.config.ts  # OpenNext Cloudflare 設定
@@ -143,11 +153,8 @@ pnpm exec wrangler secret put CREDENTIAL_ENCRYPTION_KEY
 pnpm exec wrangler secret put SETUP_TOKEN
 ```
 
-若要啟用分享頁的人機驗證，另需（設定後到「分享連結」頁開啟開關）：
-
-```bash
-pnpm exec wrangler secret put CAP_SECRET
-```
+人機驗證（Cap）的簽章密鑰已改為設定後臺配置（加密存 D1）；環境變量 `CAP_SECRET`、
+`CAP_ENDPOINT`、`CAP_SITE_KEY` 僅作為遷移期 fallback（後臺未配置時使用），非必填。
 
 以 `OIDC_*` 環境變數替代 OOBE 時，需要將 `SETUP_TOKEN` 換成 `OIDC_CLIENT_SECRET`：
 
@@ -160,7 +167,9 @@ pnpm exec wrangler secret put OIDC_CLIENT_SECRET
 - `SESSION_SECRET`：簽署登入 session（HMAC-SHA256），輪替後所有既有 session 失效。
 - `CREDENTIAL_ENCRYPTION_KEY`：32 位元組 Base64 AES 主金鑰。遺失或更換後，既有 AWS 憑證無法解密。
 - `SETUP_TOKEN`：OOBE 模式授權測試連線與啟動 SSO，長度至少 32 bytes；不寫入 D1、設定 Cookie 或 API 回應。設定完成後可刪除，但直接開啟 `/setup` 會轉到 `/503`，不影響既有登入流程。
-- `CAP_SECRET`（選填）：分享頁人機驗證（Cap）的 JWT 簽章密鑰，至少 16 bytes。僅 challenge/redeem 端點需要；未設定時管理介面的開關無法啟用。輪換會使尚未兌換的 challenge 失效，已兌換憑證（存於 D1）不受影響。
+- `CAP_SECRET`／`CAP_ENDPOINT`／`CAP_SITE_KEY`（選填）：人機驗證（Cap）的遷移期
+  fallback。後臺（設定頁）已配置時以 D1 加密值優先；僅後臺與環境變量皆無配置時，
+  管理介面的開關無法啟用。
 - `OIDC_CLIENT_SECRET`：使用 `OIDC_*` 環境變數模式的 IdP 憑證；它必須設定為 Worker secret，不得寫入 D1 或版本庫。
 
 OOBE 流程會把 Client Secret 以獨立 AAD 加密存入 D1；環境變數模式則直接從 Worker environment 讀取 `OIDC_CLIENT_SECRET`。`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_ALLOWED_EMAILS` 等非機密設定以 Dashboard 的環境變數（vars）保存即可。可用下列命令產生 `SESSION_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 或 `SETUP_TOKEN` 所需的隨機值：
@@ -229,7 +238,24 @@ Security Group 與 `ec2:RunInstances` 等權限；一般 EC2 部署亦需 `ec2:R
 
 Lightsail 的一鍵開通另需 `lightsail:SetIpAddressType` 與 `lightsail:GetInstance`。
 
+### Oracle Cloud IAM 政策建議
+
+OCI 側以 API 簽章金鑰（Tenancy/User OCID + Fingerprint + PEM）授權，建議為
+主控台專用 IAM 群組（group）加上：
+
+```
+Allow group <group> to manage instance-family in compartment <compartment>
+Allow group <group> to manage virtual-network-family in compartment <compartment>
+Allow group <group> to read instance-agent-family in compartment <compartment>
+```
+
+- `manage instance-family`：執行個體列表／電源／建機／終止。
+- `manage virtual-network-family`：VNIC、公網 IP 交換、IPv6 開通、Security List。
+- `read instance-agent-family`：主機防火牆清理的 Run Command（需執行個體已啟用
+  Oracle Cloud Agent 的 Compute Instance Run Command 外掛）。
+
 帳號管理的「開通區域」功能需額外授予下列權限（EC2 EnableRegion 屬帳號層級
+操作，AWS 要求同時具備 EC2 與 Account 兩個命名空間的權限）：（EC2 EnableRegion 屬帳號層級
 操作，AWS 要求同時具備 EC2 與 Account 兩個命名空間的權限）：
 
 ```json
@@ -288,11 +314,11 @@ Lightsail 的一鍵開通另需 `lightsail:SetIpAddressType` 與 `lightsail:GetI
   回傳綁定機器的即時狀態與公網 IP（含 `captchaEnabled`）；`rotate` 以 SSE 串流
   觸發換 IP（stop → start），並輪詢回報新公網 IP。冷卻按「連結×機器」以條件式
   UPDATE 原子搶鎖強制（429，憑證不消費）；token 無效或連結停用一律 404，不洩漏
-  存在性。人機驗證啟用時，`rotate` 需攜帶有效的 Cap 兌換憑證（`captchaToken`），
-  憑證於搶鎖成功後原子單次消費，無效／已使用回 403。
-- `/api/share/cap/*`：**公開端點**——Cap widget 的 `challenge`（發放 PoW
-  challenge）與 `redeem`（驗證解答、防重放並簽發一次性憑證）。人機驗證未啟用時
-  回 404；啟用但缺 `CAP_SECRET` 時回 503。
+  存在性。人機驗證啟用時，`rotate` 需攜帶 `captchaToken` 與 `captchaProvider`
+  （cap／turnstile／hcaptcha），由伺服端 siteverify 驗證。
+- `/api/share/cap/*`：**公開端點（相容保留）**——本地 Cap PoW 流程的
+  `challenge`／`redeem`。多渠道 siteverify 模式下 rotate 走 `/api/captcha-settings`
+  配置的伺服端驗證；人機驗證未啟用時回 404，啟用但缺密鑰時回 503。
 - `/api/share-settings`：分享頁後台設定（守衛保護）——`GET` 回人機驗證開關與
   密鑰設置狀態；`PATCH` 更新開關，啟用時要求密鑰已設定（否則 400）。
 - `/api/captcha-settings`：人機驗證（Cap）密鑰設定——`GET` 回配置狀態（密鑰不出
@@ -306,6 +332,19 @@ Lightsail 的一鍵開通另需 `lightsail:SetIpAddressType` 與 `lightsail:GetI
   的代理，`POST /api/proxies/:id/test` 實測已存代理的出口 IP 與延遲。
   帳號（AWS／OCI）綁定代理後，該帳號的所有 API 呼叫改由代理出口
   （Workers 走 cloudflare:sockets 隧道、Node 走 agent）。
+- `/api/instances`：OCI 執行個體列表（即時 ListInstances + VNIC 豐化 + D1 別名，
+  每頁 20 台、`opc-next-page` 續頁）。`/api/instances/[id]`：單台查詢（前端電源
+  輪詢用）與 DELETE（終止，可保留開機碟）。`/[id]/action`：`start`、`stop`、
+  `force-stop`、`reboot`、`force-reboot`。`/[id]/reboot-ip`：刪除並重建臨時公網
+  IP（SSE）。`/[id]/ipv6`：一鍵 IPv6 六步開通（SSE）。`/[id]/firewall`：Security
+  List 全開，預設併發主機 iptables 清理（Cloud Agent Run Command）。`/[id]/
+  host-firewall`：僅清理主機防火牆。`/[id]/alias`：自訂別名與備註。`/create-options`
+  與 `/create-options/images`：建機選項聚合；`/create`：建立執行個體。
+- `/api/oci-accounts`：OCI 帳號（API 簽章金鑰）CRUD；`/:id/test` 以 ListRegions
+  驗證簽章。可綁出口代理（`proxyId`）。
+- `/api/reserved-ips`：OCI 保留公網 IP 列表／申請；`/:id` PUT 綁定／解綁、DELETE 釋放。
+- `/api/captcha-settings`：多渠道人機驗證後臺——`GET` 回全部渠道狀態、`PUT` 儲存
+  單一渠道（provider：cap／turnstile／hcaptcha）、`DELETE ?provider=` 移除。
 - `/api/logs`：可依 `account_id`、`action`、`status`、`limit` 讀取稽核日誌。
 
 所有 `/api` 端點（SSO 登入流程、session 查詢與 `/api/share/:token/*` 公開
@@ -365,6 +404,7 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
 - **HeroUI Table 需包 `<NoSsr>`**：Table 的 SSR 在 CI 建置的 bundle 上會觸發 react-aria collections 錯誤；頁面透過 `table-lazy.ts` 轉介 namespace，並以 `no-ssr.tsx` 的掛載閘門包住。
 - **OpenNext minimal mode**：`wrangler.jsonc` 設 `NEXT_PRIVATE_MINIMAL_MODE=1`，繞過 opennextjs-cloudflare #1232 的 `getMiddlewareManifest()` 問題（本專案不用 Next middleware，守衛在 layout 實作）。
 - **生產錯誤觀測**：`src/instrumentation.ts` 的 `onRequestError` hook 會把被 Next 遮蔽的 RSC 錯誤（digest／stack）寫入 console，搭配 `wrangler.jsonc` 的 `observability.enabled` 可在 Cloudflare Dashboard 的 Workers Logs 查得。
+- **`cloudflare:sockets` 需間接 import**：`proxy.js` 以 `new Function("specifier", "return import(specifier)")` 間接取得 `cloudflare:sockets`——webpack／OpenNext esbuild／Turbopack 都會嘗試解析此自訂 scheme 而失敗，間接層讓字面路徑不存在於任何編譯產物。修改代理相關程式碼時請維持此模式，勿改回字面動態 import。
 
 ## 執行期限制
 

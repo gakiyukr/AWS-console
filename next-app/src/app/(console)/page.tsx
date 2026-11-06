@@ -1,6 +1,6 @@
 'use client'
 
-// 首頁：多雲主控台總覽儀表板（Cloud Console Dashboard）
+// 首頁：Cloud Console 總覽儀表板（Cloud Console Dashboard）
 // 整合 AWS (EC2 / Lightsail) 與 Oracle Cloud (OCI) 運算資源、帳號健康度與最新操作日誌。
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -244,7 +244,7 @@ export default function DashboardPage() {
       {/* 標題與更新按鈕 */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">多雲主控台總覽</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Cloud Console 總覽</h2>
           <p className="text-sm text-muted">
             跨 AWS 與 Oracle Cloud (OCI) 基礎設施統一管理、資源監控與快捷部署
           </p>

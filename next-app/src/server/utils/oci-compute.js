@@ -2,14 +2,6 @@
 // 所有請求經 oci-request.js 簽章；account 為 oci-account.js 的 ociAccount
 // 形態（tenancyOcid/userOcid/fingerprint/region），privateKeyPem 為解密後明文。
 import { ociRequestJson, ociSignedFetch } from "./oci-request.js";
-import { OciApiError } from "./oci-error.js";
-
-/** delay 的 Promise.withResolvers 形式，SSE 串流內輪詢用。 */
-export function delay(ms) {
-  const { promise, resolve } = Promise.withResolvers();
-  setTimeout(resolve, ms);
-  return promise;
-}
 
 /**
  * 列出 compartment 內的執行個體。
@@ -84,46 +76,3 @@ export async function terminateInstance(ctx, instanceId, options = {}) {
   });
 }
 
-// 電源輪詢節奏：3 秒 × 40 次（約 2 分鐘），與 PLAN §6.1 一致
-const POWER_POLL_INTERVAL_MS = 3_000;
-const POWER_POLL_MAX_ATTEMPTS = 40;
-
-/**
- * 輪詢執行個體狀態直到抵達目標態（或逾時）。
- * @param {{ account: object, privateKeyPem: string }} ctx
- * @param {{ instanceId: string, targetStates: string[], displayName?: string,
- *           onProgress?: (message: string) => void, maxAttempts?: number }} options
- * @returns {Promise<{ reached: boolean, lifecycleState: string }>}
- */
-export async function pollInstanceState(ctx, options) {
-  const {
-    instanceId,
-    targetStates,
-    onProgress,
-    maxAttempts = POWER_POLL_MAX_ATTEMPTS,
-  } = options;
-  let lifecycleState = "";
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    await delay(POWER_POLL_INTERVAL_MS);
-    let instance;
-    try {
-      instance = await getInstance(ctx, instanceId);
-    } catch (error) {
-      // 輪詢中的瞬時錯誤（節流、網路）不中斷等待，逾時後由外層回報
-      if (error instanceof OciApiError && error.statusCode === 404) {
-        throw error;
-      }
-      continue;
-    }
-    lifecycleState = String(instance?.lifecycleState || "");
-    onProgress?.(`執行個體狀態：${lifecycleState}`);
-    if (targetStates.includes(lifecycleState)) {
-      return { reached: true, lifecycleState };
-    }
-    // TERMINATED 等終態不可能再抵達其他目標，直接結束
-    if (lifecycleState === "TERMINATED" || lifecycleState === "TERMINATING") {
-      return { reached: false, lifecycleState };
-    }
-  }
-  return { reached: false, lifecycleState };
-}

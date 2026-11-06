@@ -94,7 +94,12 @@ export async function getProxyWithDecryptedPassword(db, proxyId, encryptionKey) 
  */
 async function cfSocketProxyFetch(urlInput, init = {}, proxyConfig) {
   // @ts-expect-error cloudflare:sockets 僅存在於 workerd 執行期
-  const sockets = /** @type {{ connect: Function }} */ (await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "cloudflare:sockets"));
+  const sockets = /** @type {{ connect?: Function }} */ (
+    await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "cloudflare:sockets").catch(() => ({}))
+  );
+  if (!sockets?.connect) {
+    throw new Error("cloudflare:sockets is not available in the current runtime environment");
+  }
   const { connect } = sockets;
   const targetUrl = typeof urlInput === "string" ? new URL(urlInput) : urlInput;
   const targetHost = targetUrl.hostname;

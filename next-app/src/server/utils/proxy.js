@@ -8,18 +8,7 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { decryptProxyPassword } from "./credential-crypto.js";
 
-// cloudflare:sockets 僅存在於 workerd 執行期；任何打包器（webpack／esbuild／
-// turbopack）都會嘗試解析此自訂 scheme 而失敗，故以 new Function 間接層
-// 取得 import，讓字面路徑不存在於任何編譯產物中。
-const CF_SOCKETS_MODULE = "cloudflare:sockets";
-/**
- * 間接層：打包器不解析 new Function 內容，字面 scheme 不會進產物。
- * @param {string} specifier
- * @returns {Promise<unknown>}
- */
-const dynamicImport = /** @type {(specifier: string) => Promise<unknown>} */ (
-  new Function("specifier", "return import(specifier)")
-);
+// cloudflare:sockets 透過 webpackIgnore 動態 import，避免 new Function 觸發 V8 EvalError。
 import { getProxyById } from "./db.js";
 
 /**
@@ -104,7 +93,8 @@ export async function getProxyWithDecryptedPassword(db, proxyId, encryptionKey) 
  * Cloudflare Workers 專用的 Socket 代理 fetch 實作。
  */
 async function cfSocketProxyFetch(urlInput, init = {}, proxyConfig) {
-  const sockets = /** @type {{ connect: Function }} */ (await dynamicImport(CF_SOCKETS_MODULE));
+  // @ts-expect-error cloudflare:sockets 僅存在於 workerd 執行期
+  const sockets = /** @type {{ connect: Function }} */ (await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "cloudflare:sockets"));
   const { connect } = sockets;
   const targetUrl = typeof urlInput === "string" ? new URL(urlInput) : urlInput;
   const targetHost = targetUrl.hostname;

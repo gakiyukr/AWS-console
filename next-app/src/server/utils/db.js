@@ -205,10 +205,10 @@ export async function listOperationLogs(db, options = {}) {
 
 // ─── AWS 帳號 ───────────────────────────────────────────────────────────────
 
-const ACCOUNT_COLUMNS = "id, name, credential_ciphertext AS credentialCiphertext, credential_iv AS credentialIv, access_key_hint AS accessKeyHint, encryption_key_version AS encryptionKeyVersion, enabled, is_default AS isDefault, last_verified_at AS lastVerifiedAt, created_at AS createdAt, updated_at AS updatedAt";
+const ACCOUNT_COLUMNS = "id, name, credential_ciphertext AS credentialCiphertext, credential_iv AS credentialIv, access_key_hint AS accessKeyHint, encryption_key_version AS encryptionKeyVersion, enabled, is_default AS isDefault, proxy_id AS proxyId, last_verified_at AS lastVerifiedAt, created_at AS createdAt, updated_at AS updatedAt";
 
 function normalizeAccount(row) {
-  return row ? { ...row, enabled: Boolean(row.enabled), isDefault: Boolean(row.isDefault) } : null;
+  return row ? { ...row, enabled: Boolean(row.enabled), isDefault: Boolean(row.isDefault), proxyId: row.proxyId ? Number(row.proxyId) : null } : null;
 }
 
 export async function listAwsAccounts(db) {
@@ -233,11 +233,12 @@ export async function createAwsAccount(db, account) {
   const isDefault = account.isDefault || existing.length === 0;
   if (isDefault)
     await db.prepare("UPDATE aws_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1").run();
+  const proxyId = account.proxyId ? Number(account.proxyId) : null;
   try {
     const result = await db.prepare(`INSERT INTO aws_accounts
-      (name, credential_ciphertext, credential_iv, access_key_hint, encryption_key_version, enabled, is_default)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`)
-      .bind(account.name, account.credentialCiphertext, account.credentialIv, account.accessKeyHint, account.encryptionKeyVersion, account.enabled === false ? 0 : 1, isDefault ? 1 : 0)
+      (name, credential_ciphertext, credential_iv, access_key_hint, encryption_key_version, enabled, is_default, proxy_id)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`)
+      .bind(account.name, account.credentialCiphertext, account.credentialIv, account.accessKeyHint, account.encryptionKeyVersion, account.enabled === false ? 0 : 1, isDefault ? 1 : 0, proxyId)
       .run();
     const id = result.meta.last_row_id;
     if (existing.length === 0) {
@@ -253,15 +254,17 @@ export async function createAwsAccount(db, account) {
 
 export async function updateAwsAccount(db, id, account) {
   const existing = await listAwsAccounts(db);
+  const current = existing.find(item => item.id === id);
   if (existing.some(item => item.id !== id && item.name === account.name))
     return null;
   if (account.isDefault)
     await db.prepare("UPDATE aws_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1").run();
+  const proxyId = account.proxyId !== undefined ? (account.proxyId ? Number(account.proxyId) : null) : (current?.proxyId ?? null);
   const result = await db.prepare(`UPDATE aws_accounts SET
     name = ?2, credential_ciphertext = ?3, credential_iv = ?4, access_key_hint = ?5,
-    encryption_key_version = ?6, enabled = ?7, is_default = ?8, updated_at = datetime('now')
+    encryption_key_version = ?6, enabled = ?7, is_default = ?8, proxy_id = ?9, updated_at = datetime('now')
     WHERE id = ?1`)
-    .bind(id, account.name, account.credentialCiphertext, account.credentialIv, account.accessKeyHint, account.encryptionKeyVersion, account.enabled ? 1 : 0, account.isDefault ? 1 : 0)
+    .bind(id, account.name, account.credentialCiphertext, account.credentialIv, account.accessKeyHint, account.encryptionKeyVersion, account.enabled ? 1 : 0, account.isDefault ? 1 : 0, proxyId)
     .run();
   return (result.meta.changes ?? 0) > 0 ? getAwsAccountById(db, id) : null;
 }
@@ -749,10 +752,10 @@ export async function activatePendingSsoSetup(db, id, encryptionKey, now = Date.
 
 // ─── OCI 帳號管理 ───────────────────────────────────────────────
 
-const OCI_ACCOUNT_COLUMNS = "id, name, tenancy_ocid AS tenancyOcid, user_ocid AS userOcid, fingerprint, region, compartment_ocid AS compartmentOcid, key_ciphertext AS keyCiphertext, key_iv AS keyIv, key_hint AS keyHint, encryption_key_version AS encryptionKeyVersion, enabled, is_default AS isDefault, last_verified_at AS lastVerifiedAt, created_at AS createdAt, updated_at AS updatedAt";
+const OCI_ACCOUNT_COLUMNS = "id, name, tenancy_ocid AS tenancyOcid, user_ocid AS userOcid, fingerprint, region, compartment_ocid AS compartmentOcid, key_ciphertext AS keyCiphertext, key_iv AS keyIv, key_hint AS keyHint, encryption_key_version AS encryptionKeyVersion, enabled, is_default AS isDefault, proxy_id AS proxyId, last_verified_at AS lastVerifiedAt, created_at AS createdAt, updated_at AS updatedAt";
 
 function normalizeOciAccount(row) {
-  return row ? { ...row, enabled: Boolean(row.enabled), isDefault: Boolean(row.isDefault) } : null;
+  return row ? { ...row, enabled: Boolean(row.enabled), isDefault: Boolean(row.isDefault), proxyId: row.proxyId ? Number(row.proxyId) : null } : null;
 }
 
 export async function listOciAccounts(db) {
@@ -777,11 +780,12 @@ export async function createOciAccount(db, account) {
   const isDefault = account.isDefault || existing.length === 0;
   if (isDefault)
     await db.prepare("UPDATE oci_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1").run();
+  const proxyId = account.proxyId ? Number(account.proxyId) : null;
   try {
     const result = await db.prepare(`INSERT INTO oci_accounts
       (name, tenancy_ocid, user_ocid, fingerprint, region, compartment_ocid,
-       key_ciphertext, key_iv, key_hint, encryption_key_version, enabled, is_default)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`)
+       key_ciphertext, key_iv, key_hint, encryption_key_version, enabled, is_default, proxy_id)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`)
       .bind(
         account.name,
         account.tenancyOcid,
@@ -795,6 +799,7 @@ export async function createOciAccount(db, account) {
         account.encryptionKeyVersion,
         account.enabled === false ? 0 : 1,
         isDefault ? 1 : 0,
+        proxyId,
       )
       .run();
     return getOciAccountById(db, result.meta.last_row_id);
@@ -807,14 +812,16 @@ export async function createOciAccount(db, account) {
 
 export async function updateOciAccount(db, id, account) {
   const existing = await listOciAccounts(db);
+  const current = existing.find(item => item.id === id);
   if (existing.some(item => item.id !== id && item.name === account.name))
     return null;
   if (account.isDefault)
     await db.prepare("UPDATE oci_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1").run();
+  const proxyId = account.proxyId !== undefined ? (account.proxyId ? Number(account.proxyId) : null) : (current?.proxyId ?? null);
   const result = await db.prepare(`UPDATE oci_accounts SET
     name = ?2, tenancy_ocid = ?3, user_ocid = ?4, fingerprint = ?5, region = ?6,
     compartment_ocid = ?7, key_ciphertext = ?8, key_iv = ?9, key_hint = ?10,
-    encryption_key_version = ?11, enabled = ?12, is_default = ?13, updated_at = datetime('now')
+    encryption_key_version = ?11, enabled = ?12, is_default = ?13, proxy_id = ?14, updated_at = datetime('now')
     WHERE id = ?1`)
     .bind(
       id,
@@ -830,6 +837,7 @@ export async function updateOciAccount(db, id, account) {
       account.encryptionKeyVersion,
       account.enabled ? 1 : 0,
       account.isDefault ? 1 : 0,
+      proxyId,
     )
     .run();
   return (result.meta.changes ?? 0) > 0 ? getOciAccountById(db, id) : null;
@@ -853,4 +861,71 @@ export async function deleteOciAccount(db, id) {
       await db.prepare("UPDATE oci_accounts SET is_default = 1, updated_at = datetime('now') WHERE id = ?1").bind(next.id).run();
   }
   return { deleted: (result.meta.changes ?? 0) > 0 };
+}
+
+// ─── 出口代理池（Proxies） ───────────────────────────────────
+
+const PROXY_COLUMNS = "id, name, protocol, host, port, username, password_ciphertext AS passwordCiphertext, password_iv AS passwordIv, password_hint AS passwordHint, created_at AS createdAt, updated_at AS updatedAt";
+
+function normalizeProxy(row) {
+  return row ? {
+    ...row,
+    port: Number(row.port),
+  } : null;
+}
+
+/**
+ * 列出全部代理節點（密碼欄位僅密文，不出伺服器）。
+ * @param {D1Database} db
+ * @returns {Promise<Array<{ id: number, name: string, protocol: string, host: string, port: number,
+ *   username: string | null, passwordCiphertext: string | null, passwordIv: string | null,
+ *   passwordHint: string | null, createdAt: string, updatedAt: string }>>}
+ */
+export async function listProxies(db) {
+  const { results } = await db.prepare(`SELECT ${PROXY_COLUMNS} FROM proxies ORDER BY id`).all();
+  return (results || []).map(normalizeProxy);
+}
+
+export async function getProxyById(db, id) {
+  const row = await db.prepare(`SELECT ${PROXY_COLUMNS} FROM proxies WHERE id = ?1`).bind(id).first();
+  return normalizeProxy(row);
+}
+
+/**
+ * 新增代理節點。
+ * @param {D1Database} db
+ * @param {{ name: string, protocol: string, host: string, port: number,
+ *   username?: string | null, passwordCiphertext?: string | null,
+ *   passwordIv?: string | null, passwordHint?: string | null }} fields
+ */
+export async function createProxy(db, { name, protocol, host, port, username = null, passwordCiphertext = null, passwordIv = null, passwordHint = null }) {
+  const result = await db.prepare(`INSERT INTO proxies
+    (name, protocol, host, port, username, password_ciphertext, password_iv, password_hint)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`)
+    .bind(name, protocol, host, port, username, passwordCiphertext, passwordIv, passwordHint)
+    .run();
+  return getProxyById(db, result.meta.last_row_id);
+}
+
+/**
+ * 更新代理節點。
+ * @param {D1Database} db
+ * @param {number} id
+ * @param {{ name: string, protocol: string, host: string, port: number,
+ *   username?: string | null, passwordCiphertext?: string | null,
+ *   passwordIv?: string | null, passwordHint?: string | null }} fields
+ */
+export async function updateProxy(db, id, { name, protocol, host, port, username = null, passwordCiphertext = null, passwordIv = null, passwordHint = null }) {
+  const result = await db.prepare(`UPDATE proxies SET
+    name = ?2, protocol = ?3, host = ?4, port = ?5, username = ?6,
+    password_ciphertext = ?7, password_iv = ?8, password_hint = ?9, updated_at = datetime('now')
+    WHERE id = ?1`)
+    .bind(id, name, protocol, host, port, username, passwordCiphertext, passwordIv, passwordHint)
+    .run();
+  return (result.meta.changes ?? 0) > 0 ? getProxyById(db, id) : null;
+}
+
+export async function deleteProxy(db, id) {
+  const result = await db.prepare("DELETE FROM proxies WHERE id = ?1").bind(id).run();
+  return (result.meta.changes ?? 0) > 0;
 }

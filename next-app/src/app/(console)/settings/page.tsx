@@ -2,7 +2,7 @@
 
 // 設定：SSH 公鑰庫（部署登入用）、DDNS（Cloudflare）與人機驗證（Cap）。
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Cloud, Eye, EyeOff, KeyRound, Loader2, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Activity, Cloud, KeyRound, Loader2, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
@@ -65,14 +65,15 @@ export default function SettingsPage() {
   const [captchaToggling, setCaptchaToggling] = useState(false);
   const [captchaLoading, setCaptchaLoading] = useState(true);
 
-  // ── API 出口代理（HTTP / HTTPS / SOCKS5） ────────────────
-  interface ProxyFormState {
-    enabled: boolean
+  // ── API 出口代理池（HTTP / HTTPS / SOCKS5）────────────────
+  interface ProxyItem {
+    id: number
+    name: string
     protocol: "http" | "https" | "socks5"
     host: string
-    port: number | string
+    port: number
     username: string
-    password: string
+    passwordHint: string | null
   }
 
   interface ProxyTestResult {
@@ -82,20 +83,22 @@ export default function SettingsPage() {
     error?: string
   }
 
-  const [proxyForm, setProxyForm] = useState<ProxyFormState>({
-    enabled: false,
-    protocol: "http",
-    host: "",
-    port: 7890,
-    username: "",
-    password: "",
-  });
-  const [proxyPasswordHint, setProxyPasswordHint] = useState<string | null>(null);
+  const [proxies, setProxies] = useState<ProxyItem[]>([]);
   const [proxyLoading, setProxyLoading] = useState(true);
   const [proxySaving, setProxySaving] = useState(false);
   const [proxyTesting, setProxyTesting] = useState(false);
+  const [proxyDeleting, setProxyDeleting] = useState<number | null>(null);
   const [proxyTestResult, setProxyTestResult] = useState<ProxyTestResult | null>(null);
-  const [showProxyPassword, setShowProxyPassword] = useState(false);
+  const [proxyFormOpen, setProxyFormOpen] = useState(false);
+  const [editingProxyId, setEditingProxyId] = useState<number | null>(null);
+  const [proxyForm, setProxyForm] = useState({
+    name: "",
+    protocol: "http" as "http" | "https" | "socks5",
+    host: "",
+    port: 7890 as number | string,
+    username: "",
+    password: "",
+  });
 
   const loadCaptcha = useCallback(async () => {
     try {
@@ -259,29 +262,13 @@ export default function SettingsPage() {
     }
   }, []);
 
-  const loadProxy = useCallback(async () => {
+  const loadProxies = useCallback(async () => {
     setProxyLoading(true);
     try {
-      const response = await fetch("/api/proxy-settings");
+      const response = await fetch("/api/proxies");
       if (!response.ok) return;
-      const data = await readJson<{
-        configured: boolean
-        enabled: boolean
-        protocol: "http" | "https" | "socks5"
-        host: string
-        port: number
-        username: string
-        passwordHint: string | null
-      }>(response);
-      setProxyPasswordHint(data.passwordHint || null);
-      setProxyForm({
-        enabled: Boolean(data.enabled),
-        protocol: data.protocol || "http",
-        host: data.host || "",
-        port: data.port || 7890,
-        username: data.username || "",
-        password: "",
-      });
+      const payload = await readJson<{ proxies?: ProxyItem[] }>(response);
+      setProxies(payload.proxies || []);
     } catch {
       // 讀取失敗不阻礙主流程
     } finally {
@@ -289,21 +276,45 @@ export default function SettingsPage() {
     }
   }, []);
 
+  function openNewProxy() {
+    setEditingProxyId(null);
+    setProxyForm({ name: "", protocol: "http", host: "", port: 7890, username: "", password: "" });
+    setProxyTestResult(null);
+    setProxyFormOpen(true);
+  }
+
+  function openEditProxy(item: ProxyItem) {
+    setEditingProxyId(item.id);
+    setProxyForm({
+      name: item.name,
+      protocol: item.protocol,
+      host: item.host,
+      port: item.port,
+      username: item.username,
+      password: "",
+    });
+    setProxyTestResult(null);
+    setProxyFormOpen(true);
+  }
+
   async function saveProxy() {
     setProxySaving(true);
     try {
       const portNum = Number(proxyForm.port);
+      if (!proxyForm.name.trim()) {
+        throw new Error("請輸入代理名稱");
+      }
       if (!proxyForm.host.trim()) {
         throw new Error("請輸入代理伺服器地址（Host）");
       }
       if (Number.isNaN(portNum) || portNum < 1 || portNum > 65535) {
         throw new Error("代理端口必須介於 1 到 65535 之間");
       }
-      const response = await fetch("/api/proxy-settings", {
-        method: "PUT",
+      const response = await fetch(editingProxyId ? `/api/proxies/${editingProxyId}` : "/api/proxies", {
+        method: editingProxyId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          enabled: proxyForm.enabled,
+          name: proxyForm.name.trim(),
           protocol: proxyForm.protocol,
           host: proxyForm.host.trim(),
           port: portNum,
@@ -313,10 +324,11 @@ export default function SettingsPage() {
       });
       const payload = await readJson<{ message?: string }>(response);
       if (!response.ok) throw new Error(await readError(response));
-      toast.success(payload.message || "代理設定已儲存");
-      await loadProxy();
+      toast.success(payload.message || (editingProxyId ? "代理已更新" : "代理已新增"));
+      setProxyFormOpen(false);
+      await loadProxies();
     } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "儲存代理設定失敗");
+      toastDanger(error instanceof Error ? error.message : "儲存代理失敗");
     } finally {
       setProxySaving(false);
     }
@@ -333,10 +345,12 @@ export default function SettingsPage() {
       if (Number.isNaN(portNum) || portNum < 1 || portNum > 65535) {
         throw new Error("代理端口必須介於 1 到 65535 之間");
       }
-      const response = await fetch("/api/proxy-settings/test", {
+      // 編輯已存代理且密碼留空時，由伺服端取原密碼測試；其餘用表單值
+      const useStored = editingProxyId !== null && !proxyForm.password;
+      const response = await fetch(useStored ? `/api/proxies/${editingProxyId}/test` : "/api/proxies/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(useStored ? {} : {
           protocol: proxyForm.protocol,
           host: proxyForm.host.trim(),
           port: portNum,
@@ -360,6 +374,22 @@ export default function SettingsPage() {
     }
   }
 
+  async function deleteProxy(item: ProxyItem) {
+    if (!window.confirm(`確定刪除代理「${item.name}」？綁定此代理的帳號會改回直連。`)) return;
+    setProxyDeleting(item.id);
+    try {
+      const response = await fetch(`/api/proxies/${item.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(await readError(response));
+      toast.success("代理已刪除");
+      if (editingProxyId === item.id) setProxyFormOpen(false);
+      await loadProxies();
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "刪除代理失敗");
+    } finally {
+      setProxyDeleting(null);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     async function init() {
@@ -367,13 +397,13 @@ export default function SettingsPage() {
       if (cancelled) return;
       await loadDdns();
       await loadCaptcha();
-      await loadProxy();
+      await loadProxies();
     }
     void init();
     return () => {
       cancelled = true;
     };
-  }, [loadData, loadDdns, loadCaptcha, loadProxy]);
+  }, [loadData, loadDdns, loadCaptcha, loadProxies]);
 
   async function addKey() {
     setSaving(true);
@@ -751,156 +781,215 @@ export default function SettingsPage() {
         </Card>
       </section>
 
-      {/* API 出口代理（HTTP / HTTPS / SOCKS5） */}
+      {/* 出口代理池（HTTP / HTTPS / SOCKS5） */}
       <section className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Activity aria-hidden size={20} />
-          <h3 className="text-lg font-semibold">API 出口代理（HTTP / SOCKS5）</h3>
-          <Chip variant={proxyForm.enabled ? "primary" : "soft"}>
-            {proxyForm.enabled ? "已啟用" : "未啟用"}
-          </Chip>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Activity aria-hidden size={20} />
+            <h3 className="text-lg font-semibold">出口代理池（HTTP / HTTPS / SOCKS5）</h3>
+            <Chip variant={proxies.length > 0 ? "primary" : "soft"} size="sm">
+              {proxies.length} 個節點
+            </Chip>
+          </div>
+          <Button size="sm" onPress={openNewProxy}>
+            <Plus aria-hidden size={16} />
+            新增代理
+          </Button>
         </div>
+
         <Card>
           <Card.Content className="grid gap-4 p-6">
             <p className="text-sm text-muted">
-              配置外部 API 請求（AWS EC2 / Lightsail、Oracle Cloud OCI、Cloudflare DDNS、人機驗證）的統一出口代理。當伺服器無法直連雲端 API 或需固定對外 IP 時使用。
+              建立代理節點後，可到「帳號管理」為個別 AWS／OCI 帳號綁定出口代理——該帳號的所有 API
+              呼叫（EC2／Lightsail／OCI／DDNS）將改由代理出口連線。未綁定的帳號維持直連。
             </p>
 
-            {/* 啟用開關 */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-divider bg-surface-subtle p-3">
-              <div className="space-y-0.5">
-                <Label htmlFor="proxy-enabled-switch" className="text-sm font-medium cursor-pointer">
-                  啟用 API 出口代理
-                </Label>
-                <p className="text-xs text-muted">
-                  關閉時所有 API 呼叫均直連；開啟後將自動透過下方代理節點連線。
-                </p>
-              </div>
-              <Switch
-                id="proxy-enabled-switch"
-                checked={proxyForm.enabled}
-                onCheckedChange={checked => setProxyForm(prev => ({ ...prev, enabled: checked }))}
-              />
-            </div>
-
-            {proxyLoading ? (
-              <p className="text-sm text-muted">載入中…</p>
-            ) : (
-              <div className="grid gap-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="grid gap-1.5">
-                    <label className="text-xs font-medium">通訊協定（Protocol）</label>
+            {proxyFormOpen ? (
+              <div className="grid gap-4 rounded-lg border border-divider bg-surface-subtle p-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-base font-semibold">
+                    {editingProxyId ? "編輯代理" : "新增代理"}
+                  </h4>
+                  <Button variant="ghost" size="sm" onPress={() => setProxyFormOpen(false)}>取消</Button>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="proxy-name" className="text-sm font-medium">代理名稱</Label>
+                  <Input
+                    id="proxy-name"
+                    placeholder="例如： 家寬出口 / 機房 SOCKS5"
+                    value={proxyForm.name}
+                    onChange={event => setProxyForm(previous => ({ ...previous, name: event.target.value }))}
+                  />
+                </div>
+                <div className="grid gap-4 md:grid-cols-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="proxy-protocol" className="text-sm font-medium">協定</Label>
                     <CustomSelect
                       value={proxyForm.protocol}
-                      onChange={val => setProxyForm(prev => ({ ...prev, protocol: val as "http" | "https" | "socks5" }))}
+                      onChange={value => setProxyForm(previous => ({ ...previous, protocol: value as "http" | "https" | "socks5" }))}
                       options={[
                         { value: "http", label: "HTTP" },
-                        { value: "https", label: "HTTPS (CONNECT)" },
+                        { value: "https", label: "HTTPS" },
                         { value: "socks5", label: "SOCKS5" },
                       ]}
                     />
                   </div>
-
-                  <div className="grid gap-1.5">
-                    <label className="text-xs font-medium">伺服器地址（Host / IP）</label>
+                  <div className="grid gap-2 md:col-span-2">
+                    <Label htmlFor="proxy-host" className="text-sm font-medium">伺服器地址（Host）</Label>
                     <Input
+                      id="proxy-host"
                       placeholder="例如：127.0.0.1 或 proxy.example.com"
                       value={proxyForm.host}
-                      onChange={e => setProxyForm(prev => ({ ...prev, host: e.target.value }))}
+                      onChange={event => setProxyForm(previous => ({ ...previous, host: event.target.value }))}
                     />
                   </div>
-
-                  <div className="grid gap-1.5">
-                    <label className="text-xs font-medium">連接埠（Port）</label>
+                  <div className="grid gap-2">
+                    <Label htmlFor="proxy-port" className="text-sm font-medium">端口</Label>
                     <Input
-                      type="number"
-                      placeholder="例如：7890"
+                      id="proxy-port"
+                      inputMode="numeric"
                       value={String(proxyForm.port)}
-                      onChange={e => setProxyForm(prev => ({ ...prev, port: e.target.value }))}
+                      onChange={event => setProxyForm(previous => ({ ...previous, port: event.target.value }))}
                     />
                   </div>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="grid gap-1.5">
-                    <label className="text-xs font-medium">帳號（Username，選填）</label>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="grid gap-2">
+                    <Label htmlFor="proxy-username" className="text-sm font-medium">帳號（選填）</Label>
                     <Input
-                      placeholder="無驗證可留空"
+                      id="proxy-username"
+                      autoComplete="off"
                       value={proxyForm.username}
-                      onChange={e => setProxyForm(prev => ({ ...prev, username: e.target.value }))}
+                      onChange={event => setProxyForm(previous => ({ ...previous, username: event.target.value }))}
                     />
                   </div>
-
-                  <div className="grid gap-1.5">
-                    <label className="text-xs font-medium">
-                      密碼（Password，選填）{proxyPasswordHint ? `（已配置：${proxyPasswordHint}，留空則保留）` : ""}
-                    </label>
-                    <div className="relative">
-                      <Input
-                        type={showProxyPassword ? "text" : "password"}
-                        placeholder={proxyPasswordHint ? "留空即保留目前密碼" : "無驗證可留空"}
-                        value={proxyForm.password}
-                        onChange={e => setProxyForm(prev => ({ ...prev, password: e.target.value }))}
-                        className="pr-10"
-                      />
-                      <button
-                        type="button"
-                        aria-label={showProxyPassword ? "隱藏密碼" : "顯示密碼"}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-foreground p-1 transition-colors"
-                        onClick={() => setShowProxyPassword(prev => !prev)}
-                      >
-                        {showProxyPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="proxy-password" className="text-sm font-medium">
+                      密碼（選填）{editingProxyId ? "（留空即保留原密碼）" : ""}
+                    </Label>
+                    <Input
+                      id="proxy-password"
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder={editingProxyId ? "留空即保留目前密碼" : "無驗證可留空"}
+                      value={proxyForm.password}
+                      onChange={event => setProxyForm(previous => ({ ...previous, password: event.target.value }))}
+                    />
                   </div>
                 </div>
 
-                {/* 測試結果卡片 */}
                 {proxyTestResult ? (
                   <div
-                    className={`rounded-lg border p-3 text-sm flex items-start gap-2 ${
+                    className={`rounded-lg border p-3 text-sm ${
                       proxyTestResult.ok
-                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                        : "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400"
+                        ? "border-success/40 bg-success/10 text-foreground"
+                        : "border-danger/40 bg-danger/10 text-foreground"
                     }`}
                   >
-                    <Activity size={18} className="shrink-0 mt-0.5" />
-                    <div className="space-y-0.5">
-                      <p className="font-semibold">
-                        {proxyTestResult.ok ? "連線測試成功" : "連線測試失敗"}
-                      </p>
-                      {proxyTestResult.ok ? (
-                        <p className="text-xs opacity-90">
-                          出口 IP: <span className="font-mono font-bold">{proxyTestResult.exitIp}</span>
-                          {proxyTestResult.latencyMs != null ? ` · 延遲: ${proxyTestResult.latencyMs} ms` : ""}
-                        </p>
-                      ) : (
-                        <p className="text-xs opacity-90">
-                          錯誤訊息：{proxyTestResult.error || "連線逾時或代理拒絕連線"}
-                        </p>
-                      )}
-                    </div>
+                    {proxyTestResult.ok ? (
+                      <>
+                        連線測試成功 — 出口 IP:{" "}
+                        <span className="font-mono font-bold">{proxyTestResult.exitIp}</span>
+                        {proxyTestResult.latencyMs != null ? ` · 延遲: ${proxyTestResult.latencyMs} ms` : ""}
+                      </>
+                    ) : (
+                      <>連線測試失敗：{proxyTestResult.error || "連線逾時或代理拒絕連線"}</>
+                    )}
                   </div>
                 ) : null}
 
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+                <div className="flex justify-end gap-2">
                   <Button
                     variant="secondary"
                     isDisabled={proxyTesting || !proxyForm.host}
                     onPress={testProxy}
                   >
                     {proxyTesting ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : <Activity aria-hidden size={16} className="mr-2" />}
-                    測試代理連線
+                    測試連線
                   </Button>
-
-                  <Button
-                    isDisabled={proxySaving || !proxyForm.host}
-                    onPress={saveProxy}
-                  >
+                  <Button isDisabled={proxySaving || !proxyForm.host || !proxyForm.name} onPress={saveProxy}>
                     {proxySaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-                    儲存代理設定
+                    {editingProxyId ? "儲存變更" : "新增代理"}
                   </Button>
                 </div>
+              </div>
+            ) : null}
+
+            {proxyLoading ? (
+              <div className="flex py-8 text-sm text-muted">
+                <Loader2 aria-hidden size={16} className="mr-2 animate-spin" />載入中...
+              </div>
+            ) : proxies.length === 0 ? (
+              <div className="border-y py-10 text-center text-sm text-muted">
+                代理池是空的。新增代理節點後即可在帳號管理綁定。
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {proxies.map(item => (
+                  <Card key={item.id}>
+                    <Card.Content className="grid gap-3 p-6">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <h4 className="truncate text-base font-semibold">{item.name}</h4>
+                          <p className="truncate font-mono text-xs text-muted">
+                            {item.protocol}://{item.host}:{item.port}
+                          </p>
+                        </div>
+                        <Chip variant="secondary" size="sm">{item.protocol.toUpperCase()}</Chip>
+                      </div>
+                      <div className="flex flex-col gap-1 text-xs text-muted">
+                        <span>帳號：{item.username || "（無驗證）"}</span>
+                        <span>密碼：{item.passwordHint ? `····${item.passwordHint}` : "（未設）"}</span>
+                      </div>
+                      <div className="flex justify-end gap-1 border-t pt-3">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          isDisabled={proxyTesting}
+                          onPress={() => openEditProxy(item)}
+                        >
+                          編輯
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          isDisabled={proxyTesting || proxyDeleting === item.id}
+                          onPress={() => {
+                            // 列表直接測試：由伺服端取原密碼
+                            setProxyTesting(true);
+                            void (async () => {
+                              try {
+                                const response = await fetch(`/api/proxies/${item.id}/test`, { method: "POST" });
+                                const data = await readJson<ProxyTestResult>(response);
+                                setProxyTestResult(data);
+                                if (data.ok) {
+                                  toast.success(`連線成功！出口 IP: ${data.exitIp}${data.latencyMs != null ? ` (${data.latencyMs}ms)` : ""}`);
+                                } else {
+                                  toastDanger(data.error || "連線測試失敗");
+                                }
+                              } catch (error) {
+                                toastDanger(error instanceof Error ? error.message : "代理測試出錯");
+                              } finally {
+                                setProxyTesting(false);
+                              }
+                            })();
+                          }}
+                        >
+                          {proxyDeleting === item.id ? <Loader2 aria-hidden size={16} className="animate-spin" /> : "測試"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label="刪除代理"
+                          isDisabled={proxyDeleting === item.id}
+                          onPress={() => deleteProxy(item)}
+                        >
+                          {proxyDeleting === item.id ? <Loader2 aria-hidden size={16} className="animate-spin" /> : <Trash2 aria-hidden size={16} />}
+                        </Button>
+                      </div>
+                    </Card.Content>
+                  </Card>
+                ))}
               </div>
             )}
           </Card.Content>

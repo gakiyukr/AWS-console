@@ -36,6 +36,15 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   if (existing.isDefault && !isDefault) {
     return errorResponse(409, "請先將另一個 AWS 帳號設為預設");
   }
+  // 出口代理綁定：proxyId 為 null/空字串表示解除綁定（回直連）
+  let proxyId = existing.proxyId;
+  if (body.proxyId !== undefined) {
+    const parsed = body.proxyId === null || body.proxyId === "" ? null : Number(body.proxyId);
+    if (parsed !== null && (!Number.isSafeInteger(parsed) || parsed <= 0)) {
+      return errorResponse(400, "代理 ID 無效");
+    }
+    proxyId = parsed;
+  }
 
   try {
     const encrypted = body.accessKeyId || body.secretAccessKey
@@ -55,6 +64,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       ...encrypted,
       enabled,
       isDefault,
+      proxyId,
     });
     if (!account) {
       return errorResponse(409, "AWS 帳號名稱已存在");

@@ -3,7 +3,7 @@
 // 簽章採用 SigV4，但 HTTP 方法固定為 POST，操作由 X-Amz-Target 標頭指定。
 import { AwsRequestError } from "../lib/aws-request-error.js";
 import { textToBase64 } from "./bytes.js";
-import { outboundFetch } from "./proxy.js";
+import { fetchViaProxy } from "./proxy.js";
 
 function bytesToHex(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -140,12 +140,15 @@ export async function lightsailQuery(region, env, operation, params = {}) {
   const timeoutId = setTimeout(() => controller.abort(), LIGHTSAIL_QUERY_TIMEOUT_MS);
 
   try {
-    const response = await outboundFetch(endpoint, {
+    const fetchOptions = {
       method: "POST",
       headers,
       body,
       signal: controller.signal,
-    }, env);
+    };
+    const response = env?.PROXY
+      ? await fetchViaProxy(endpoint, fetchOptions, env.PROXY)
+      : await fetch(endpoint, fetchOptions);
 
     const responseText = await response.text();
 

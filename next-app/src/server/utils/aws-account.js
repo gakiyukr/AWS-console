@@ -1,5 +1,6 @@
 import { decryptAwsCredentials } from "./credential-crypto.js";
 import { getAwsAccountById, getDefaultAwsAccount } from "./db.js";
+import { getProxyWithDecryptedPassword } from "./proxy.js";
 
 class AwsAccountConfigurationError extends Error {
   constructor(message, statusCode = 400) {
@@ -34,6 +35,15 @@ export async function resolveAwsAccount(env, rawAccountId) {
     throw new AwsAccountConfigurationError("指定的 AWS 帳號已停用", 409);
 
   const credentials = await decryptAwsCredentials(account, env.CREDENTIAL_ENCRYPTION_KEY);
+  let proxy = null;
+  if (account.proxyId && env.DB) {
+    try {
+      proxy = await getProxyWithDecryptedPassword(env.DB, account.proxyId, env.CREDENTIAL_ENCRYPTION_KEY);
+    } catch (e) {
+      console.error("載入帳號代理失敗:", e);
+    }
+  }
+
   return {
     account,
     awsEnv: {
@@ -41,6 +51,7 @@ export async function resolveAwsAccount(env, rawAccountId) {
       AWS_ACCESS_KEY_ID: credentials.accessKeyId,
       AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey,
       AWS_SESSION_TOKEN: credentials.sessionToken || undefined,
+      PROXY: proxy,
     },
   };
 }

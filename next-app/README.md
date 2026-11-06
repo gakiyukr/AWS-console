@@ -302,6 +302,10 @@ Lightsail 的一鍵開通另需 `lightsail:SetIpAddressType` 與 `lightsail:GetI
 - `/api/machines/:id/ddns`：機器綁定（PUT `{hostname}`，須為 Zone 子網域，
   儲存後立即同步 A 記錄）與停用（DELETE，CF 記錄保留不刪）。僅 EC2，
   Wavelength／Lightsail 回 400。
+- `/api/proxies`：出口代理池 CRUD；`POST /api/proxies/test` 可測「表單中未儲存」
+  的代理，`POST /api/proxies/:id/test` 實測已存代理的出口 IP 與延遲。
+  帳號（AWS／OCI）綁定代理後，該帳號的所有 API 呼叫改由代理出口
+  （Workers 走 cloudflare:sockets 隧道、Node 走 agent）。
 - `/api/logs`：可依 `account_id`、`action`、`status`、`limit` 讀取稽核日誌。
 
 所有 `/api` 端點（SSO 登入流程、session 查詢與 `/api/share/:token/*` 公開
@@ -346,6 +350,13 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
   machines 的 `ddns_hostname`／`ddns_record_id` 綁定欄位。換 IP／開關機成功
   後自動同步 A 記錄；僅 EC2（非 Wavelength）。
 - `0013_captcha_settings.sql`：人機驗證（Cap）密鑰設定表（AES-256-GCM 加密、單列）。
+- `0014_captcha_endpoint.sql`／`0015_multi_captcha_providers.sql`：人機驗證加入
+  實例地址（endpoint）與站點公鑰（site_key），並擴充為多渠道（Cap／Turnstile／
+  hCaptcha）的 `captcha_providers` 表，舊設定自動遷移。
+- `0016_oci_accounts.sql`／`0017_oci_instances_and_aliases.sql`：OCI 帳號憑證
+  （PEM 加密）、執行個體別名表，及 operation_log 的 OCI 關聯欄位。
+- `0018_proxies.sql`：出口代理池（HTTP／HTTPS／SOCKS5，密碼加密），並為
+  `aws_accounts`／`oci_accounts` 加 `proxy_id` 綁定（刪除代理時自動回直連）。
   設定頁配置後優先於環境變量 `CAP_SECRET`（保留為遷移相容 fallback）。
 
 ## 已知建置注意事項

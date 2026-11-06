@@ -40,6 +40,14 @@ export async function POST(request: Request): Promise<Response> {
   if (body.enabled === false && body.isDefault === true) {
     return errorResponse(400, "預設 AWS 帳號必須保持啟用");
   }
+  // 出口代理綁定（可選）：null/空字串＝不綁定
+  let proxyId = null;
+  if (body.proxyId !== undefined && body.proxyId !== null && body.proxyId !== "") {
+    proxyId = Number(body.proxyId);
+    if (!Number.isSafeInteger(proxyId) || proxyId <= 0) {
+      return errorResponse(400, "代理 ID 無效");
+    }
+  }
 
   try {
     const encrypted = await encryptAwsCredentials({
@@ -52,6 +60,7 @@ export async function POST(request: Request): Promise<Response> {
       ...encrypted,
       enabled: body.enabled !== false,
       isDefault: body.isDefault === true,
+      proxyId,
     });
     if (!account) {
       return errorResponse(409, "AWS 帳號名稱已存在");

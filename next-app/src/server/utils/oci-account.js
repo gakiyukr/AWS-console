@@ -1,5 +1,6 @@
 import { decryptOciCredentials } from "./credential-crypto.js";
 import { getDefaultOciAccount, getOciAccountById } from "./db.js";
+import { getProxyWithDecryptedPassword } from "./proxy.js";
 
 class OciAccountConfigurationError extends Error {
   constructor(message, statusCode = 400) {
@@ -37,6 +38,15 @@ export async function resolveOciAccount(env, rawAccountId) {
     throw new OciAccountConfigurationError("指定的 OCI 帳號已停用", 409);
 
   const credentials = await decryptOciCredentials(account, env.CREDENTIAL_ENCRYPTION_KEY);
+  let proxy = null;
+  if (account.proxyId && env.DB) {
+    try {
+      proxy = await getProxyWithDecryptedPassword(env.DB, account.proxyId, env.CREDENTIAL_ENCRYPTION_KEY);
+    } catch (e) {
+      console.error("載入 OCI 帳號代理失敗:", e);
+    }
+  }
+
   return {
     account,
     ociAccount: {
@@ -47,6 +57,7 @@ export async function resolveOciAccount(env, rawAccountId) {
       compartmentOcid: account.compartmentOcid,
       displayName: account.name,
       id: account.id,
+      proxy,
     },
     privateKeyPem: credentials.privateKeyPem,
   };

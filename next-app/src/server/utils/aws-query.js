@@ -1,5 +1,5 @@
 import { AwsRequestError } from "../lib/aws-request-error.js";
-import { outboundFetch } from "./proxy.js";
+import { fetchViaProxy } from "./proxy.js";
 import { textToBase64 } from "./bytes.js";
 
 function bytesToHex(bytes) {
@@ -130,12 +130,15 @@ export async function ec2Query(region, env, action, params = {}) {
   };
   if (sessionToken)
     headers["x-amz-security-token"] = sessionToken;
-  const response = await outboundFetch(endpoint, {
+  const fetchOptions = {
     method,
     headers,
     body,
     signal: AbortSignal.timeout(AWS_QUERY_TIMEOUT_MS),
-  }, env);
+  };
+  const response = env?.PROXY
+    ? await fetchViaProxy(endpoint, fetchOptions, env.PROXY)
+    : await fetch(endpoint, fetchOptions);
   const xml = await response.text();
 
   if (!response.ok || /<Errors>[\s\S]*<\/Errors>/.test(xml)) {

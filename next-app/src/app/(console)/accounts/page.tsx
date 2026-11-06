@@ -24,6 +24,7 @@ interface AwsAccount {
   accessKeyHint: string
   enabled: boolean
   isDefault: boolean
+  proxyId: number | null
   lastVerifiedAt: string | null
 }
 
@@ -64,6 +65,7 @@ const EMPTY_AWS_FORM = {
   sessionToken: "",
   enabled: true,
   isDefault: false,
+  proxyId: null as number | null,
 };
 
 // ─── OCI 帳號定義 ───────────────────────────────────────────
@@ -79,6 +81,7 @@ interface OciAccount {
   keyHint: string
   enabled: boolean
   isDefault: boolean
+  proxyId: number | null
   lastVerifiedAt: string | null
 }
 
@@ -92,6 +95,7 @@ const EMPTY_OCI_FORM = {
   privateKeyPem: "",
   enabled: true,
   isDefault: false,
+  proxyId: null as number | null,
 };
 
 export default function AccountsPage() {
@@ -127,6 +131,20 @@ export default function AccountsPage() {
   const [editingOciAccountId, setEditingOciAccountId] = useState<number | null>(null);
   const [ociAccountForm, setOciAccountForm] = useState(EMPTY_OCI_FORM);
 
+  // ─── 代理池（帳號綁定用） ──────────────────────────────────
+  const [proxyOptions, setProxyOptions] = useState<Array<{ id: number; name: string; protocol: string; host: string; port: number }>>([]);
+
+  const loadProxies = useCallback(async () => {
+    try {
+      const response = await fetch("/api/proxies");
+      if (!response.ok) return;
+      const payload = await readJson<{ proxies?: Array<{ id: number; name: string; protocol: string; host: string; port: number }> }>(response);
+      setProxyOptions(payload.proxies || []);
+    } catch {
+      // 讀取失敗不影響帳號管理
+    }
+  }, []);
+
   // ─── 資料載入 ─────────────────────────────────────────────
   const loadRegionCaches = useCallback(async (accountList: AwsAccount[]) => {
     const next: Record<number, { ec2: string[]; lightsail: string[] }> = {};
@@ -147,12 +165,13 @@ export default function AccountsPage() {
       const payload = await readJson<{ accounts: AwsAccount[] }>(response);
       setAccounts(payload.accounts);
       await loadRegionCaches(payload.accounts);
+      await loadProxies();
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入 AWS 帳號資料失敗");
     } finally {
       setLoading(false);
     }
-  }, [loadRegionCaches]);
+  }, [loadRegionCaches, loadProxies]);
 
   const loadOciData = useCallback(async () => {
     setLoadingOci(true);
@@ -201,6 +220,7 @@ export default function AccountsPage() {
     setEditingAccountId(null);
     setAccountForm({ ...EMPTY_AWS_FORM, isDefault: accounts.length === 0 });
     setAccountOpen(true);
+    void loadProxies();
   }
 
   function openEditAccount(account: AwsAccount) {
@@ -212,6 +232,7 @@ export default function AccountsPage() {
       sessionToken: "",
       enabled: account.enabled,
       isDefault: account.isDefault,
+      proxyId: account.proxyId ?? null,
     });
     setAccountOpen(true);
   }
@@ -223,6 +244,7 @@ export default function AccountsPage() {
         name: accountForm.name,
         enabled: accountForm.enabled,
         isDefault: accountForm.isDefault,
+        proxyId: accountForm.proxyId,
       };
       if (!editingAccountId || accountForm.accessKeyId.trim()) {
         body.accessKeyId = accountForm.accessKeyId;
@@ -325,7 +347,7 @@ export default function AccountsPage() {
   }
 
   // ─── OCI 操作 ─────────────────────────────────────────────
-  function updateOciField(key: keyof typeof EMPTY_OCI_FORM, value: string | boolean) {
+  function updateOciField(key: keyof typeof EMPTY_OCI_FORM, value: string | boolean | number | null) {
     setOciAccountForm(previous => ({ ...previous, [key]: value }));
   }
 
@@ -333,6 +355,7 @@ export default function AccountsPage() {
     setEditingOciAccountId(null);
     setOciAccountForm({ ...EMPTY_OCI_FORM, isDefault: ociAccounts.length === 0 });
     setOciAccountOpen(true);
+    void loadProxies();
   }
 
   function openEditOciAccount(account: OciAccount) {
@@ -347,6 +370,7 @@ export default function AccountsPage() {
       privateKeyPem: "",
       enabled: account.enabled,
       isDefault: account.isDefault,
+      proxyId: account.proxyId ?? null,
     });
     setOciAccountOpen(true);
   }
@@ -363,6 +387,7 @@ export default function AccountsPage() {
         compartmentOcid: ociAccountForm.compartmentOcid,
         enabled: ociAccountForm.enabled,
         isDefault: ociAccountForm.isDefault,
+        proxyId: ociAccountForm.proxyId,
       };
       if (!editingOciAccountId || ociAccountForm.privateKeyPem.trim()) {
         body.privateKeyPem = ociAccountForm.privateKeyPem;
@@ -695,6 +720,28 @@ export default function AccountsPage() {
                         onCheckedChange={checked => setAccountForm(previous => ({ ...previous, isDefault: checked }))}
                       />
                     </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="aws-account-proxy" className="text-sm font-medium">出口代理（選填）</Label>
+                      <select
+                        id="aws-account-proxy"
+                        className="h-9 rounded-md border bg-background px-3 text-sm"
+                        value={accountForm.proxyId ?? ""}
+                        onChange={event => setAccountForm(previous => ({
+                          ...previous,
+                          proxyId: event.target.value ? Number(event.target.value) : null,
+                        }))}
+                      >
+                        <option value="">不使用（直連）</option>
+                        {proxyOptions.map(proxy => (
+                          <option key={proxy.id} value={proxy.id}>
+                            {proxy.name}（{proxy.protocol}://{proxy.host}:{proxy.port}）
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-muted">
+                        綁定後此帳號的所有 API 呼叫改由該代理出口；代理節點在「設定」頁管理。
+                      </p>
+                    </div>
                   </div>
                 </div>
               </Modal.Body>
@@ -892,6 +939,25 @@ export default function AccountsPage() {
                         checked={ociAccountForm.isDefault}
                         onCheckedChange={checked => updateOciField("isDefault", checked)}
                       />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="oci-account-proxy" className="text-sm font-medium">出口代理（選填）</Label>
+                      <select
+                        id="oci-account-proxy"
+                        className="h-9 rounded-md border bg-background px-3 text-sm"
+                        value={ociAccountForm.proxyId ?? ""}
+                        onChange={event => updateOciField("proxyId", event.target.value ? Number(event.target.value) : null)}
+                      >
+                        <option value="">不使用（直連）</option>
+                        {proxyOptions.map(proxy => (
+                          <option key={proxy.id} value={proxy.id}>
+                            {proxy.name}（{proxy.protocol}://{proxy.host}:{proxy.port}）
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-muted">
+                        綁定後此帳號的所有 OCI API 呼叫改由該代理出口。
+                      </p>
                     </div>
                   </div>
                 </div>

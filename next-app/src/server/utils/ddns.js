@@ -6,8 +6,6 @@ import { parseInstanceDescription } from "./ec2-xml.js";
 import { deriveIpFromPublicDns } from "./power.js";
 import { decryptDdnsToken, encryptDdnsToken } from "./credential-crypto.js";
 import { setMachineDdns } from "./db.js";
-import { outboundFetch } from "./proxy.js";
-import { getEnv } from "@/server/env";
 
 const CF_API_BASE = "https://api.cloudflare.com/client/v4";
 // DDNS 用途需要 SSH 直連，必須 DNS-only；60 秒讓換 IP 後盡快生效
@@ -50,16 +48,11 @@ export async function clearDdnsSettings(db) {
   return (result.meta.changes ?? 0) > 0;
 }
 
-async function defaultFetch(url, init) {
-  const env = await getEnv().catch(() => null);
-  return outboundFetch(url, init, env);
-}
-
 /**
  * 驗證 CF Token 是否能存取指定 zone（需 Zone.DNS Edit）。
  * @returns {Promise<string | null>} zone id；Token 無效或 zone 不存在回 null
  */
-export async function verifyCloudflareToken(token, zoneName, fetchImpl = defaultFetch) {
+export async function verifyCloudflareToken(token, zoneName, fetchImpl = fetch) {
   const response = await fetchImpl(
     `${CF_API_BASE}/zones?name=${encodeURIComponent(zoneName)}`,
     { headers: { Authorization: `Bearer ${token}` } },
@@ -106,7 +99,7 @@ export function isHostnameInZone(hostname, zoneName) {
  * @param {{ fetchImpl?: typeof fetch, knownIp?: string | null }} [opts]
  * @returns {Promise<{ status: "created"|"match"|"updated"|"skipped", ip?: string, hostname?: string, reason?: string }>}
  */
-export async function syncMachineDdns(awsEnv, db, machine, { fetchImpl = defaultFetch, knownIp = null } = {}) {
+export async function syncMachineDdns(awsEnv, db, machine, { fetchImpl = fetch, knownIp = null } = {}) {
   if (machine.platform !== "ec2" || machine.isWavelength) {
     return { status: "skipped", reason: "Wavelength／Lightsail 機器不支援 DDNS" };
   }

@@ -111,6 +111,7 @@ export function MachineTable({
               <Table.Column className="w-[130px]">公網 IP</Table.Column>
               <Table.Column className="w-[190px]">IPv6</Table.Column>
               <Table.Column className="w-[250px]">DNS</Table.Column>
+              <Table.Column className="w-[220px]">DDNS</Table.Column>
               <Table.Column className="w-[510px]">操作</Table.Column>
             </Table.Header>
             <Table.Body>

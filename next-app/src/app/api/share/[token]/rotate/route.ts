@@ -95,17 +95,17 @@ export async function POST(
       } catch {
         // 使用時間更新失敗不影響結果
       }
-      if (machine.platform === "ec2" && !machine.isWavelength && machine.ddnsHostname) {
+      if (machine.platform === "ec2" && !machine.isWavelength) {
         try {
           const result = await syncMachineDdns(awsEnv, env.DB, machine, { knownIp: newIpAddress });
-          if (result.status === "updated" || result.status === "created") {
+          if (result.results.some(item => item.status === "updated" || item.status === "created")) {
             try {
               await appendOperationLog(env.DB, {
                 action: "ddns-sync",
                 region: machine.region,
                 instanceId: machine.instanceId,
                 status: "success",
-                detail: { hostname: result.hostname, ip: result.ip, trigger: "share-rotate" },
+                detail: { bindings: result.results, trigger: "share-rotate" },
                 awsAccountId: machine.awsAccountId,
               });
             } catch {

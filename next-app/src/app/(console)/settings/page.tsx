@@ -36,10 +36,41 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [keyForm, setKeyForm] = useState({ label: "", publicKey: "" });
 
-  // ── DDNS（Cloudflare） ──────────────────────────────────
-  const [ddns, setDdns] = useState<{ configured: boolean; zoneName: string | null; tokenHint: string | null } | null>(null);
-  const [ddnsForm, setDdnsForm] = useState({ token: "", zoneName: "" });
-  const [ddnsSaving, setDdnsSaving] = useState(false);
+  // ── DDNS（Cloudflare）：多域名＋前綴綁定 ─────────────────
+  interface DdnsDomain {
+    id: number
+    zoneName: string
+    zoneId: string
+    tokenHint: string
+    createdAt: string
+  }
+  interface DdnsBinding {
+    id: number
+    domainId: number
+    zoneName: string
+    prefix: string
+    fqdn: string
+    machineId: number
+    machineName: string
+    machineInstanceId: string
+    recordId: string | null
+  }
+  interface DdnsMachineOption {
+    id: number
+    name: string
+    instanceId: string
+    isWavelength: boolean
+    platform: string
+  }
+  const [ddnsDomains, setDdnsDomains] = useState<DdnsDomain[]>([]);
+  const [ddnsBindings, setDdnsBindings] = useState<DdnsBinding[]>([]);
+  const [ddnsMachines, setDdnsMachines] = useState<DdnsMachineOption[]>([]);
+  const [ddnsLoading, setDdnsLoading] = useState(true);
+  const [ddnsDomainForm, setDdnsDomainForm] = useState({ token: "", zoneName: "" });
+  const [ddnsDomainSaving, setDdnsDomainSaving] = useState(false);
+  const [ddnsBindingForm, setDdnsBindingForm] = useState({ domainId: "", prefix: "", machineId: "" });
+  const [ddnsBindingSaving, setDdnsBindingSaving] = useState(false);
+  const [ddnsRemovingId, setDdnsRemovingId] = useState<string | null>(null);
 
   // ── 人機驗證（多渠道備援：Cap、Turnstile、hCaptcha） ────
   interface CaptchaProviderState {
@@ -199,52 +230,102 @@ export default function SettingsPage() {
   }
 
   const loadDdns = useCallback(async () => {
+    setDdnsLoading(true);
     try {
-      const response = await fetch("/api/ddns-settings");
-      if (!response.ok) return;
-      const payload = await readJson<{ configured?: boolean; zoneName?: string | null; tokenHint?: string | null }>(response);
-      setDdns({
-        configured: Boolean(payload.configured),
-        zoneName: payload.zoneName || null,
-        tokenHint: payload.tokenHint || null,
-      });
+      const [bindingsRes, machinesRes] = await Promise.all([
+        fetch("/api/ddns/bindings"),
+        fetch("/api/machines?platform=ec2"),
+      ]);
+      if (bindingsRes.ok) {
+        const payload = await readJson<{ bindings?: DdnsBinding[]; domains?: DdnsDomain[] }>(bindingsRes);
+        setDdnsDomains(payload.domains || []);
+        setDdnsBindings(payload.bindings || []);
+      }
+      if (machinesRes.ok) {
+        const rows = await readJson<DdnsMachineOption[]>(machinesRes);
+        setDdnsMachines((rows || []).filter(m => !m.isWavelength && m.platform === "ec2"));
+      }
     } catch {
       // 讀取失敗不影響其他設定
+    } finally {
+      setDdnsLoading(false);
     }
   }, []);
 
-  async function saveDdns() {
-    setDdnsSaving(true);
+  async function addDdnsDomain() {
+    setDdnsDomainSaving(true);
     try {
-      const response = await fetch("/api/ddns-settings", {
-        method: "PUT",
+      const response = await fetch("/api/ddns/domains", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: ddnsForm.token.trim(), zoneName: ddnsForm.zoneName.trim() }),
+        body: JSON.stringify({
+          token: ddnsDomainForm.token.trim(),
+          zoneName: ddnsDomainForm.zoneName.trim(),
+        }),
       });
       const payload = await readJson<{ message?: string }>(response);
       if (!response.ok) throw new Error(await readError(response));
-      toast.success(payload.message || "DDNS 已設定");
-      setDdnsForm({ token: "", zoneName: "" });
+      toast.success(payload.message || "域名已新增");
+      setDdnsDomainForm({ token: "", zoneName: "" });
       await loadDdns();
     } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "DDNS 設定失敗");
+      toastDanger(error instanceof Error ? error.message : "新增域名失敗");
     } finally {
-      setDdnsSaving(false);
+      setDdnsDomainSaving(false);
     }
   }
 
-  async function removeDdns() {
-    if (!window.confirm("確定移除 Cloudflare DDNS 設定？已綁定的機器主機名會保留，但不再自動同步。")) return;
-    setDdnsSaving(true);
+  async function removeDdnsDomain(domain: DdnsDomain) {
+    if (!window.confirm(`確定移除域名「${domain.zoneName}」？其前綴綁定會一併清除（Cloudflare 記錄保留）。`)) return;
+    setDdnsRemovingId(`domain-${domain.id}`);
     try {
-      const response = await fetch("/api/ddns-settings", { method: "DELETE" });
+      const response = await fetch(`/api/ddns/domains/${domain.id}`, { method: "DELETE" });
       if (!response.ok) throw new Error(await readError(response));
-      toast.success("DDNS 設定已移除");
-      setDdns({ configured: false, zoneName: null, tokenHint: null });
+      toast.success("域名已移除");
+      await loadDdns();
     } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "移除 DDNS 設定失敗");
+      toastDanger(error instanceof Error ? error.message : "移除域名失敗");
     } finally {
-      setDdnsSaving(false);
+      setDdnsRemovingId(null);
+    }
+  }
+
+  async function addDdnsBinding() {
+    setDdnsBindingSaving(true);
+    try {
+      const response = await fetch("/api/ddns/bindings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domainId: Number(ddnsBindingForm.domainId),
+          prefix: ddnsBindingForm.prefix.trim().toLowerCase(),
+          machineId: Number(ddnsBindingForm.machineId),
+        }),
+      });
+      const payload = await readJson<{ message?: string }>(response);
+      if (!response.ok) throw new Error(await readError(response));
+      toast.success(payload.message || "前綴已綁定");
+      setDdnsBindingForm({ domainId: "", prefix: "", machineId: "" });
+      await loadDdns();
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "綁定前綴失敗");
+    } finally {
+      setDdnsBindingSaving(false);
+    }
+  }
+
+  async function removeDdnsBinding(binding: DdnsBinding) {
+    if (!window.confirm(`確定移除綁定「${binding.fqdn}」？Cloudflare 記錄會保留。`)) return;
+    setDdnsRemovingId(`binding-${binding.id}`);
+    try {
+      const response = await fetch(`/api/ddns/bindings/${binding.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(await readError(response));
+      toast.success("綁定已移除");
+      await loadDdns();
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "移除綁定失敗");
+    } finally {
+      setDdnsRemovingId(null);
     }
   }
 
@@ -447,7 +528,7 @@ export default function SettingsPage() {
     <div className="flex w-full flex-col gap-8">
       <div>
         <h2 className="text-2xl font-bold tracking-tight">設定</h2>
-        <p className="text-sm text-muted">管理 SSH 公鑰與 DDNS（Cloudflare）設定</p>
+        <p className="text-sm text-muted">管理 SSH 公鑰、DDNS（Cloudflare）與人機驗證設定</p>
       </div>
 
       <section className="space-y-4">
@@ -527,63 +608,202 @@ export default function SettingsPage() {
         )}
       </section>
 
-      {/* DDNS（Cloudflare） */}
+      {/* DDNS（Cloudflare）：多域名＋前綴綁定 */}
       <section className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Cloud aria-hidden size={20} />
-          <h3 className="text-lg font-semibold">DDNS（Cloudflare）</h3>
-          {ddns ? (
-            <Chip variant={ddns.configured ? "primary" : "soft"}>
-              {ddns.configured ? "已設定" : "未設定"}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Cloud aria-hidden size={20} />
+            <h3 className="text-lg font-semibold">DDNS（Cloudflare）</h3>
+            <Chip variant={ddnsDomains.length > 0 ? "primary" : "soft"} size="sm">
+              {ddnsDomains.length} 個域名
             </Chip>
-          ) : null}
+          </div>
         </div>
+
         <Card>
           <Card.Content className="grid gap-4 p-6">
             <p className="text-sm text-muted">
-              設定後可在 EC2 機器上綁定主機名；每次換 IP／開關機會自動檢查並更新 Cloudflare 的 DNS A 記錄。
-              Token 需要 Zone.DNS Edit 權限（記錄一律 DNS-only，不走代理）。
+              先新增域名（各自 Cloudflare API Token），再以「前綴 → 機器」綁定主機名。
+              每次換 IP／開關機會自動更新對應的 DNS A 記錄（DNS-only、TTL 60）。
+              一台機器可綁多個前綴；同一域名下相同前綴只能指向一台機器。
             </p>
-            {ddns?.configured ? (
-              <div className="grid gap-3">
-                <div className="flex flex-wrap items-center gap-4 text-sm">
-                  <span>Zone：<span className="font-medium">{ddns.zoneName}</span></span>
-                  <span className="text-muted">Token ····{ddns.tokenHint}</span>
-                </div>
-                <div className="flex justify-end border-t pt-3">
-                  <Button variant="danger" isDisabled={ddnsSaving} onPress={removeDdns}>
-                    {ddnsSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : <Trash2 aria-hidden size={16} className="mr-2" />}
-                    移除設定
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="grid gap-4">
+
+            {/* 新增域名 */}
+            <div className="grid gap-4 rounded-lg border border-divider bg-surface-subtle p-4">
+              <h4 className="text-base font-semibold">新增域名</h4>
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="grid gap-2">
-                  <label htmlFor="ddns-token" className="text-sm font-medium">API Token</label>
+                  <Label htmlFor="ddns-zone" className="text-sm font-medium">Zone 名稱</Label>
+                  <Input
+                    id="ddns-zone"
+                    placeholder="例如： example.com"
+                    value={ddnsDomainForm.zoneName}
+                    onChange={event => setDdnsDomainForm(previous => ({ ...previous, zoneName: event.target.value }))}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="ddns-token" className="text-sm font-medium">API Token</Label>
                   <Input
                     id="ddns-token"
                     type="password"
                     placeholder="Cloudflare API Token（Zone.DNS Edit）"
-                    value={ddnsForm.token}
-                    onChange={event => setDdnsForm(previous => ({ ...previous, token: event.target.value }))}
+                    value={ddnsDomainForm.token}
+                    onChange={event => setDdnsDomainForm(previous => ({ ...previous, token: event.target.value }))}
                   />
                 </div>
-                <div className="grid gap-2">
-                  <label htmlFor="ddns-zone" className="text-sm font-medium">Zone 名稱</label>
-                  <Input
-                    id="ddns-zone"
-                    placeholder="例如： example.com"
-                    value={ddnsForm.zoneName}
-                    onChange={event => setDdnsForm(previous => ({ ...previous, zoneName: event.target.value }))}
-                  />
-                </div>
-                <div className="flex justify-end border-t pt-3">
-                  <Button isDisabled={ddnsSaving || !ddnsForm.token || !ddnsForm.zoneName} onPress={saveDdns}>
-                    {ddnsSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-                    驗證並儲存
-                  </Button>
-                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  isDisabled={ddnsDomainSaving || !ddnsDomainForm.token || !ddnsDomainForm.zoneName}
+                  onPress={addDdnsDomain}
+                >
+                  {ddnsDomainSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : <Plus aria-hidden size={16} className="mr-2" />}
+                  驗證並新增
+                </Button>
+              </div>
+            </div>
+
+            {/* 域名清單 */}
+            {ddnsLoading ? (
+              <div className="flex py-6 text-sm text-muted">
+                <Loader2 aria-hidden size={16} className="mr-2 animate-spin" />載入中...
+              </div>
+            ) : ddnsDomains.length === 0 ? (
+              <div className="border-y py-8 text-center text-sm text-muted">尚未新增任何域名</div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {ddnsDomains.map(domain => (
+                  <Card key={domain.id}>
+                    <Card.Content className="grid gap-2 p-5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <h4 className="truncate text-base font-semibold">{domain.zoneName}</h4>
+                          <p className="text-xs text-muted">Token ····{domain.tokenHint}</p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label="移除域名"
+                          isDisabled={ddnsRemovingId === `domain-${domain.id}`}
+                          onPress={() => removeDdnsDomain(domain)}
+                        >
+                          {ddnsRemovingId === `domain-${domain.id}`
+                            ? <Loader2 aria-hidden size={16} className="animate-spin" />
+                            : <Trash2 aria-hidden size={16} />}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted">
+                        綁定數：{ddnsBindings.filter(b => b.domainId === domain.id).length}
+                      </p>
+                    </Card.Content>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </Card.Content>
+        </Card>
+
+        <Card>
+          <Card.Content className="grid gap-4 p-6">
+            <h4 className="text-base font-semibold">前綴綁定</h4>
+            <p className="text-sm text-muted">
+              完整主機名 = 前綴 + 所選域名。綁定後會立即同步一次 DNS。
+            </p>
+            <div className="grid gap-4 rounded-lg border border-divider bg-surface-subtle p-4 md:grid-cols-3">
+              <div className="grid gap-2">
+                <Label className="text-sm font-medium">域名</Label>
+                <CustomSelect
+                  value={ddnsBindingForm.domainId}
+                  onChange={value => setDdnsBindingForm(previous => ({ ...previous, domainId: value }))}
+                  placeholder="選擇域名"
+                  options={ddnsDomains.map(domain => ({
+                    value: String(domain.id),
+                    label: domain.zoneName,
+                  }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="ddns-prefix" className="text-sm font-medium">前綴</Label>
+                <Input
+                  id="ddns-prefix"
+                  placeholder="例如： mybox 或 api.prod"
+                  value={ddnsBindingForm.prefix}
+                  onChange={event => setDdnsBindingForm(previous => ({ ...previous, prefix: event.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label className="text-sm font-medium">機器（EC2）</Label>
+                <CustomSelect
+                  value={ddnsBindingForm.machineId}
+                  onChange={value => setDdnsBindingForm(previous => ({ ...previous, machineId: value }))}
+                  placeholder="選擇機器"
+                  options={ddnsMachines.map(machine => ({
+                    value: String(machine.id),
+                    label: `${machine.name || machine.instanceId}（${machine.instanceId}）`,
+                  }))}
+                />
+              </div>
+            </div>
+            {ddnsBindingForm.domainId && ddnsBindingForm.prefix.trim() ? (
+              <p className="text-xs text-muted">
+                將建立：
+                <span className="font-mono">
+                  {ddnsBindingForm.prefix.trim().toLowerCase()}.
+                  {ddnsDomains.find(d => String(d.id) === ddnsBindingForm.domainId)?.zoneName || "…"}
+                </span>
+              </p>
+            ) : null}
+            <div className="flex justify-end">
+              <Button
+                isDisabled={
+                  ddnsBindingSaving ||
+                  !ddnsBindingForm.domainId ||
+                  !ddnsBindingForm.prefix.trim() ||
+                  !ddnsBindingForm.machineId
+                }
+                onPress={addDdnsBinding}
+              >
+                {ddnsBindingSaving ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : <Plus aria-hidden size={16} className="mr-2" />}
+                綁定並同步
+              </Button>
+            </div>
+
+            {ddnsBindings.length === 0 ? (
+              <div className="border-y py-8 text-center text-sm text-muted">尚未建立任何前綴綁定</div>
+            ) : (
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full text-sm">
+                  <thead className="bg-surface-subtle text-left text-xs text-muted">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">主機名</th>
+                      <th className="px-3 py-2 font-medium">機器</th>
+                      <th className="px-3 py-2 font-medium text-right">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {ddnsBindings.map(binding => (
+                      <tr key={binding.id}>
+                        <td className="px-3 py-2 font-mono text-xs">{binding.fqdn}</td>
+                        <td className="px-3 py-2 text-xs">
+                          {binding.machineName || binding.machineInstanceId}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label="移除綁定"
+                            isDisabled={ddnsRemovingId === `binding-${binding.id}`}
+                            onPress={() => removeDdnsBinding(binding)}
+                          >
+                            {ddnsRemovingId === `binding-${binding.id}`
+                              ? <Loader2 aria-hidden size={16} className="animate-spin" />
+                              : <Trash2 aria-hidden size={16} />}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </Card.Content>

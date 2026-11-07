@@ -3,11 +3,27 @@
 
 :root {
   color-scheme: light;
+  /* 黑白主題：覆蓋 HeroUI 預設的藍色 accent。
+     --accent-soft／--accent-hover／--focus 等 color-mix 派生會以此新值
+     於執行時重新解析，無需逐一覆寫。 */
+  --accent: oklch(0.145 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+}
+
+/* dark 主題（掛 .dark 或 data-theme=dark 時）：黑白反轉 */
+.dark,
+[data-theme="dark"] {
+  --accent: oklch(0.985 0 0);
+  --accent-foreground: oklch(0.205 0 0);
 }
 
 @theme inline {
   --font-sans: "Inter", "Noto Sans TC", "Segoe UI", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  /* shadcn 慣例的 primary 語彙（bg-primary／text-primary-foreground），
+     對映到黑白 accent；此前未定義，相關 class 實際上無顏色。 */
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-foreground);
 }
 
 @media (prefers-color-scheme: dark) {

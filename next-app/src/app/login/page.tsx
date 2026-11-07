@@ -45,7 +45,7 @@ function SignInContent() {
           className="pointer-events-none absolute inset-0 opacity-40"
           style={{
             background:
-              "radial-gradient(48rem 24rem at 20% -10%, rgba(59,130,246,0.35), transparent 60%), radial-gradient(40rem 20rem at 110% 110%, rgba(16,185,129,0.25), transparent 60%)",
+              "radial-gradient(48rem 24rem at 20% -10%, rgba(255,255,255,0.16), transparent 60%), radial-gradient(40rem 20rem at 110% 110%, rgba(255,255,255,0.08), transparent 60%)",
           }}
         />
         <div className="relative z-10 flex items-center gap-3">
@@ -64,7 +64,7 @@ function SignInContent() {
             { title: "憑證集中保管", detail: "AWS 帳號金鑰加密存放於 D1，部署時自動套用" },
           ].map(item => (
             <div key={item.title} className="flex gap-3">
-              <span aria-hidden="true" className="mt-2 size-1.5 shrink-0 rounded-full bg-emerald-400" />
+              <span aria-hidden="true" className="mt-2 size-1.5 shrink-0 rounded-full bg-white/50" />
               <div>
                 <p className="text-sm font-medium">{item.title}</p>
                 <p className="text-sm text-white/60">{item.detail}</p>

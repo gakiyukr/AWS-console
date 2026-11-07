@@ -81,14 +81,14 @@ export async function POST(
   let ddnsWarning: string | undefined;
   try {
     const result = await syncMachineDdns(awsEnv, env.DB, machine);
-    if (result.status === "updated" || result.status === "created") {
+    if (result.results.some(item => item.status === "updated" || item.status === "created")) {
       try {
         await appendOperationLog(env.DB, {
           action: "ddns-sync",
           region: machine.region,
           instanceId: machine.instanceId,
           status: "success",
-          detail: { hostname: result.hostname, ip: result.ip, trigger: "reboot-ip" },
+          detail: { bindings: result.results, trigger: "reboot-ip" },
           awsAccountId: machine.awsAccountId,
         });
       } catch {

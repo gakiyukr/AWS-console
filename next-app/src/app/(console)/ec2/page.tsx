@@ -4,7 +4,7 @@
 // 先經確認對話框；新增機器以「帳號 → Region → 執行個體」三層下拉由
 // 後端即時列出候選，或直接前往「新增 EC2」部署一台新機。
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Loader2, Plus, RefreshCw, Server } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
@@ -42,25 +42,6 @@ const EMPTY_ADD_FORM = {
 export default function Ec2OverviewPage() {
   const { machines, loading, refreshing, actionPendingId, busyPending, refresh, actions, dialogs } =
     useMachines("ec2");
-
-  // DDNS（Cloudflare）設定狀態：決定對話框顯示表單或引導
-  const [ddnsConfigured, setDdnsConfigured] = useState<boolean | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await fetch("/api/ddns-settings");
-        if (!response.ok) return;
-        const payload = await readJson<{ configured?: boolean }>(response);
-        if (!cancelled) setDdnsConfigured(Boolean(payload.configured));
-      } catch {
-        // 設定狀態讀取失敗不影響頁面；對話框內會再提示
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [dialogs.ddns.open]);
 
   // ── 新增機器（從既有 AWS 執行個體挑選） ────────────────────
   const [addOpen, setAddOpen] = useState(false);
@@ -361,60 +342,6 @@ export default function Ec2OverviewPage() {
         • 指派 IPv6 位址並<strong>重新開機一次</strong>（約 1 分鐘，不會更換 IPv4 公網 IP）
       </ConfirmDialog>
 
-      {/* DDNS（Cloudflare）綁定 */}
-      <Modal.Root isOpen={dialogs.ddns.open} onOpenChange={dialogs.ddns.setOpen}>
-        <Modal.Backdrop>
-          <Modal.Container size="sm" placement="center">
-            <Modal.Dialog>
-              <Modal.Header>
-                <Modal.Heading>DDNS（Cloudflare）</Modal.Heading>
-              </Modal.Header>
-              <Modal.Body className="grid gap-3">
-                {ddnsConfigured === false ? (
-                  <p className="text-sm text-muted">
-                    尚未設定 Cloudflare 憑證。請先到「設定」頁新增 API Token 與 Zone，再回來綁定主機名。
-                  </p>
-                ) : (
-                  <>
-                    <div className="text-sm text-muted">
-                      綁定後每次換 IP／開關機會自動檢查並更新此機器的 DNS A 記錄。
-                      {dialogs.ddns.target?.ddnsHostname ? (
-                        <> 目前綁定：<span className="font-mono text-xs">{dialogs.ddns.target.ddnsHostname}</span></>
-                      ) : null}
-                    </div>
-                    <div className="grid gap-2">
-                      <label htmlFor="ddns-hostname" className="text-sm font-medium">主機名（FQDN）</label>
-                      <Input
-                        id="ddns-hostname"
-                        placeholder="例如： mybox.example.com"
-                        value={dialogs.ddns.hostname}
-                        onChange={event => dialogs.ddns.setHostname(event.target.value)}
-                      />
-                    </div>
-                  </>
-                )}
-              </Modal.Body>
-              <Modal.Footer>
-                {ddnsConfigured !== false && dialogs.ddns.target?.ddnsHostname ? (
-                  <Button variant="danger" isDisabled={dialogs.ddns.pending} onPress={dialogs.ddns.clear}>
-                    停用
-                  </Button>
-                ) : null}
-                <Button variant="secondary" onPress={() => dialogs.ddns.setOpen(false)}>取消</Button>
-                {ddnsConfigured !== false ? (
-                  <Button
-                    isDisabled={dialogs.ddns.pending || !dialogs.ddns.hostname.trim()}
-                    onPress={dialogs.ddns.confirm}
-                  >
-                    {dialogs.ddns.pending ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-                    儲存並同步
-                  </Button>
-                ) : null}
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal.Root>
 
       <ConfirmDialog
         open={dialogs.remove.open}

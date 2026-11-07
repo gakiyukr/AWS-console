@@ -212,7 +212,7 @@ export default function DashboardPage() {
     ...machines.map(m => ({
       key: `aws-${m.id}`,
       cloud: (m.platform === "lightsail" ? "AWS Lightsail" : "AWS EC2") as string,
-      cloudColor: m.platform === "lightsail" ? "text-blue-500" : "text-amber-500",
+      cloudColor: "text-foreground",
       id: m.instanceId || `machine-${m.id}`,
       name: m.name || m.instanceId,
       region: m.region || "—",
@@ -295,7 +295,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="rounded-lg bg-surface p-2 border border-divider">
                       <p className="text-xs text-muted">Wavelength</p>
-                      <p className="text-lg font-bold text-blue-500">{wavelengthCount}</p>
+                      <p className="text-lg font-bold text-foreground">{wavelengthCount}</p>
                     </div>
                   </div>
                 </div>
@@ -322,7 +322,7 @@ export default function DashboardPage() {
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-2 text-sm font-semibold">
-                      <Zap aria-hidden="true" size={18} className="text-blue-500" />
+                      <Zap aria-hidden="true" size={18} className="text-foreground" />
                       AWS Lightsail
                     </span>
                     <Chip variant="soft" size="sm">{lightsailCount} 台實例</Chip>

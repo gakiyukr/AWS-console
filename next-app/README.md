@@ -14,9 +14,10 @@
   通過驗證，憑證由伺服端 siteverify 驗證。渠道與密鑰於設定後臺管理（加密存 D1）。
 - 出口代理池（HTTP／HTTPS／SOCKS5）：可為個別 AWS／OCI 帳號綁定出口代理，
   該帳號的所有雲端 API 呼叫改由代理出口（Workers 走 cloudflare:sockets 隧道）。
-- DDNS（Cloudflare）：設定頁配置 API Token 與 Zone 後，EC2 機器（非
-  Wavelength）可綁定主機名；換 IP／開關機成功後自動檢查並更新 DNS A 記錄
-  （DNS-only、TTL 60）。Token 加密存 D1（獨立 AAD 網域）。
+- DDNS（Cloudflare）：設定後臺可新增**多個域名**（各自 API Token 加密），
+  並以「前綴 → 機器」集中綁定主機名（FQDN = 前綴 + 域名）；一台 EC2 機器
+  可綁多個前綴。換 IP／開關機成功後自動更新對應 DNS A 記錄（DNS-only、
+  TTL 60）。僅 EC2（非 Wavelength）；機器總覽只顯示綁定清單，管理在設定頁。
 - EC2 與 Lightsail 完全分開：各自有機器總覽（`/ec2`、`/lightsail`）與
   新增機器表單（`/ec2/new`、`/lightsail/new`），首頁 `/` 轉址到 `/ec2`。
   機器以 `machines.platform`（ec2 / lightsail）區分，狀態查詢與電源操作
@@ -51,7 +52,7 @@ next-app/
 │   ├── accounts/        # AWS／OCI 帳號管理（分頁）
 │   ├── logs/            # 稽核日誌
 │   ├── share/           # 分享連結管理（對外一鍵換 IP）
-│   └── settings/        # SSH 公鑰、DDNS、人機驗證、出口代理池
+│   └── settings/        # SSH 公鑰、DDNS 多域名／前綴綁定、人機驗證、出口代理池
 ├── src/app/login/、setup/  # 登入頁與 OOBE 初始設定
 ├── src/app/share/[token]/  # 公開分享頁（免登入，token 即憑證）
 ├── src/app/api/         # API 路由（見下方「API 範圍」）
@@ -323,11 +324,11 @@ Allow group <group> to read instance-agent-family in compartment <compartment>
   密鑰設置狀態；`PATCH` 更新開關，啟用時要求密鑰已設定（否則 400）。
 - `/api/captcha-settings`：人機驗證（Cap）密鑰設定——`GET` 回配置狀態（密鑰不出
   伺服器）、`PUT` 驗證長度後加密存 D1、`DELETE` 移除密鑰並自動停用人機驗證。
-- `/api/ddns-settings`：DDNS（Cloudflare）設定——`GET` 回設定狀態（Token 不出
-  伺服器）、`PUT` 驗證 Token 能存取指定 Zone 後加密儲存、`DELETE` 移除。
-- `/api/machines/:id/ddns`：機器綁定（PUT `{hostname}`，須為 Zone 子網域，
-  儲存後立即同步 A 記錄）與停用（DELETE，CF 記錄保留不刪）。僅 EC2，
-  Wavelength／Lightsail 回 400。
+- `/api/ddns/domains`：DDNS 域名 CRUD（多域名）；POST 先驗證 Token 可存取
+  Zone 後加密儲存；DELETE 連帶清除該域名的前綴綁定（CF 記錄保留）。
+- `/api/ddns/bindings`：前綴綁定列表／建立（POST `{domainId, prefix, machineId}`，
+  建立後立即同步）；`/:id` DELETE 移除綁定。僅 EC2 非 Wavelength；同
+  `(domain, prefix)` 唯一（409）。
 - `/api/proxies`：出口代理池 CRUD；`POST /api/proxies/test` 可測「表單中未儲存」
   的代理，`POST /api/proxies/:id/test` 實測已存代理的出口 IP 與延遲。
   帳號（AWS／OCI）綁定代理後，該帳號的所有 API 呼叫改由代理出口
@@ -396,7 +397,9 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
   （PEM 加密）、執行個體別名表，及 operation_log 的 OCI 關聯欄位。
 - `0018_proxies.sql`：出口代理池（HTTP／HTTPS／SOCKS5，密碼加密），並為
   `aws_accounts`／`oci_accounts` 加 `proxy_id` 綁定（刪除代理時自動回直連）。
-  設定頁配置後優先於環境變量 `CAP_SECRET`（保留為遷移相容 fallback）。
+- `0019_ddns_multi_domains.sql`：DDNS 改為多域名（`ddns_domains`）＋前綴綁定
+  （`ddns_bindings`，`UNIQUE(domain_id, prefix)`）；舊單列設定與
+  `machines.ddns_hostname` 自動遷移後移除舊表／舊欄。
 
 ## 已知建置注意事項
 

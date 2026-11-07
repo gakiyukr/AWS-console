@@ -5,7 +5,7 @@
 // 因此本端點在 AWS 異常時仍能回 200，讓前端可管理清單本身。
 // POST /api/machines：新增機器至 D1 清單。全欄位正則驗證；
 // (region, instanceId) 重複時回 409。
-import { createMachine, getAwsAccountById, listMachines } from "@/server/utils/db.js";
+import { createMachine, getAwsAccountById, getMachinesDdnsMap, listMachines } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
 import { mergeLightsailStates } from "@/server/utils/lightsail-power.js";
 import { mergeMachineStates } from "@/server/utils/power.js";
@@ -28,6 +28,8 @@ export async function GET(request: Request): Promise<Response> {
   const platform = (platformParam as "ec2" | "lightsail" | null) || null;
 
   const machines = await listMachines(env.DB, platform);
+  // 附加每台機器的 DDNS 綁定 FQDN 清單（多前綴）
+  const ddnsMap = await getMachinesDdnsMap(env.DB);
   // 依帳號分組後，再依平台分流狀態查詢：Lightsail 名稱送進 EC2
   // DescribeInstances 會讓整個地區批次失敗，兩者必須分開。
   const groups = new Map<string, typeof machines>();
@@ -60,7 +62,10 @@ export async function GET(request: Request): Promise<Response> {
       }
     }
   }));
-  return jsonResponse(machines.map(machine => rows.get(machine.id)));
+  return jsonResponse(machines.map(machine => ({
+    ...rows.get(machine.id),
+    ddnsHostnames: ddnsMap.get(machine.id) || [],
+  })));
 }
 
 export async function POST(request: Request): Promise<Response> {

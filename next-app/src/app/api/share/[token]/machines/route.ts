@@ -3,7 +3,7 @@
 // instanceId、AWS 帳號等內部資訊。token 無效或連結停用一律 404，
 // 不洩漏連結存在性。多 AWS 帳號依帳號分組解析憑證，單一帳號查詢
 // 失敗時該組列降級為「查詢失敗」，與 /api/machines 的行為一致。
-import { getShareLinkByToken, listMachines } from "@/server/utils/db.js";
+import { getShareLinkByToken, getShareLinkDailyUsage, listMachines, shareQuotaDay } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse } from "@/server/utils/http.js";
 import { getActiveCaptchaProviders, isShareCaptchaEnabled } from "@/server/utils/cap.js";
 import { mergeMachineStates } from "@/server/utils/power.js";
@@ -55,8 +55,13 @@ export async function GET(
   const isCaptchaActive = captchaEnabled && activeProviders.length > 0;
   const capProvider = activeProviders.find(p => p.provider === "cap");
 
+  const dailyUsageData = link.dailyLimit > 0
+    ? await getShareLinkDailyUsage(env.DB, link.id, shareQuotaDay())
+    : null;
+
   return jsonResponse({
     link: { name: link.name, cooldownMinutes: link.cooldownMinutes },
+    dailyUsage: dailyUsageData ? { limit: dailyUsageData.limit, used: dailyUsageData.used } : null,
     captchaEnabled: isCaptchaActive,
     captchaProviders: isCaptchaActive ? activeProviders.map(p => ({
       provider: p.provider,

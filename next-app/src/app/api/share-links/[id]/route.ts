@@ -14,6 +14,7 @@ import { requireApiSession } from "@/server/api-guard";
 
 const MAX_BODY_BYTES = 10240;
 const MAX_COOLDOWN_MINUTES = 1440;
+const MAX_DAILY_LIMIT = 10000;
 
 function parseId(rawId: string): number | null {
   const id = Number(rawId);
@@ -41,7 +42,7 @@ export async function PATCH(
   if (!body || typeof body !== "object") {
     return errorResponse(400, "請求內容無效。");
   }
-  const updates: { name?: string; cooldownMinutes?: number; enabled?: boolean; machineIds?: number[] } = {};
+  const updates: { name?: string; cooldownMinutes?: number; enabled?: boolean; machineIds?: number[]; dailyLimit?: number } = {};
   if (body.name !== undefined) {
     const name = validateInput(body.name, undefined, "連結名稱");
     if (!name.valid) {
@@ -61,6 +62,13 @@ export async function PATCH(
       return errorResponse(400, "啟用狀態格式無效。");
     }
     updates.enabled = body.enabled;
+  }
+  if (body.dailyLimit !== undefined) {
+    const dailyLimit = Number(body.dailyLimit);
+    if (!Number.isInteger(dailyLimit) || dailyLimit < 0 || dailyLimit > MAX_DAILY_LIMIT) {
+      return errorResponse(400, `每日上限須為 0–${MAX_DAILY_LIMIT} 的整數（0 表示不限）。`);
+    }
+    updates.dailyLimit = dailyLimit;
   }
   if (body.machineIds !== undefined) {
     if (!Array.isArray(body.machineIds) || body.machineIds.length === 0) {

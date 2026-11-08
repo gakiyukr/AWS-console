@@ -5,10 +5,14 @@
 // 換 IP 途中失敗時冷卻仍生效——操作已實際擾動機器，不應被連續重試。
 import {
   appendOperationLog,
+  claimShareDailyQuota,
   claimShareRotation,
+  cleanupOldDailyUsage,
   getMachineById,
   getShareLinkByToken,
   getShareLinkMachineBinding,
+  getShareLinkDailyUsage,
+  shareQuotaDay,
   touchShareLinkUsed,
 } from "@/server/utils/db.js";
 import { errorResponse, readJsonBody, sseResponse, toHttpError } from "@/server/utils/http.js";
@@ -64,6 +68,15 @@ export async function POST(
     }
   }
 
+  // 每日配額預檢（唯讀）：額度滿直接 429，不觸發冷卻鎖
+  const day = shareQuotaDay(now);
+  if (link.dailyLimit > 0) {
+    const usage = await getShareLinkDailyUsage(env.DB, link.id, day);
+    if (usage.used >= link.dailyLimit) {
+      return errorResponse(429, `此連結今日更換次數已達上限（${link.dailyLimit} 次），請明天再試。`);
+    }
+  }
+
   const claimed = await claimShareRotation(env.DB, link.id, machineId, now, cooldownMs);
   if (!claimed) {
     const binding = await getShareLinkMachineBinding(env.DB, link.id, machineId);
@@ -73,6 +86,15 @@ export async function POST(
     return errorResponse(429, remainingMs > 0
       ? `更換太頻繁，請約 ${Math.max(1, Math.ceil(remainingMs / 60_000))} 分鐘後再試。`
       : "更換太頻繁，請稍後再試。");
+  }
+
+  // 冷卻搶到後原子消耗每日配額；併發下被搶滿則 429
+  //（此時冷卻已被觸發，屬罕見併發邊角，可接受）。
+  if (link.dailyLimit > 0) {
+    const quota = await claimShareDailyQuota(env.DB, link.id, day, link.dailyLimit);
+    if (!quota.claimed) {
+      return errorResponse(429, `此連結今日更換次數已達上限（${link.dailyLimit} 次），請明天再試。`);
+    }
   }
 
   let awsEnv;
@@ -92,6 +114,7 @@ export async function POST(
       });
       try {
         await touchShareLinkUsed(env.DB, link.id);
+        await cleanupOldDailyUsage(env.DB, shareQuotaDay(Date.now()));
       } catch {
         // 使用時間更新失敗不影響結果
       }

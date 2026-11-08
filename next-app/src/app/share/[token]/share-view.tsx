@@ -306,6 +306,8 @@ export default function ShareView({ token, linkName }: { token: string; linkName
   // 人機驗證：後台開關 + 多渠道配置 + 目前選擇渠道與已解決憑證
   const [captchaEnabled, setCaptchaEnabled] = useState(false);
   const [captchaProviders, setCaptchaProviders] = useState<CaptchaProviderInfo[]>([]);
+  // 每日配額：limit=null 表示連結未啟用配額
+  const [dailyUsage, setDailyUsage] = useState<{ limit: number; used: number } | null>(null);
   const [activeProviderId, setActiveProviderId] = useState<string>("cap");
   const [solvedCaptcha, setSolvedCaptcha] = useState<{ provider: string; token: string } | null>(null);
   // 換 IP 確認彈窗選取的目標機器；null 表示彈窗關閉
@@ -326,6 +328,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
       machines?: ShareMachine[];
       captchaEnabled?: boolean;
       captchaProviders?: CaptchaProviderInfo[];
+      dailyUsage?: { limit: number; used: number } | null;
     }>(response);
     const rows = payload.machines || [];
     setMachines(rows);
@@ -333,6 +336,11 @@ export default function ShareView({ token, linkName }: { token: string; linkName
     const isCaptchaActive = Boolean(payload.captchaEnabled && providers.length > 0);
     setCaptchaEnabled(isCaptchaActive);
     setCaptchaProviders(providers);
+    setDailyUsage(
+      payload.dailyUsage && payload.dailyUsage.limit > 0
+        ? { limit: payload.dailyUsage.limit, used: payload.dailyUsage.used }
+        : null,
+    );
     if (providers.length > 0) {
       setActiveProviderId(current => (providers.some(p => p.provider === current) ? current : providers[0].provider));
     }
@@ -398,8 +406,12 @@ export default function ShareView({ token, linkName }: { token: string; linkName
         }),
       });
       if (response.status === 429) {
-        // 冷卻中：伺服端未消費憑證，保留現有驗證結果以便冷卻後重試
-        throw new Error(await readError(response));
+        const message = await readError(response);
+        if (message.includes("上限") && dailyUsage) {
+          setDailyUsage({ limit: dailyUsage.limit, used: dailyUsage.limit });
+        }
+        // 冷卻／配額：伺服端未消費憑證，保留現有驗證結果以便之後重試
+        throw new Error(message);
       }
       if (!response.ok) {
         // 憑證無效或已使用等錯誤：狀態不明，重置 widget 以策安全
@@ -451,6 +463,11 @@ export default function ShareView({ token, linkName }: { token: string; linkName
         <p className="mt-2 text-sm text-muted">
           更換公網 IP 會將機器關機再開機，約需 1–2 分鐘，期間服務會短暫中斷。
         </p>
+        {dailyUsage ? (
+          <p className="mt-1 text-xs text-muted">
+            今日已更換 {dailyUsage.used} / {dailyUsage.limit} 次
+          </p>
+        ) : null}
       </div>
 
       {loading ? (
@@ -468,6 +485,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
             const cooling = remainingMs > 0;
             const running = machine.state === "running";
             const busy = pendingMachineId !== null;
+            const quotaExhausted = dailyUsage !== null && dailyUsage.used >= dailyUsage.limit;
             return (
               <Card key={machine.id} className="min-w-0">
                 <Card.Content className="grid grid-cols-1 gap-3 p-6">
@@ -500,7 +518,7 @@ export default function ShareView({ token, linkName }: { token: string; linkName
                   <div className="border-t pt-3">
                     <Button
                       className="w-full"
-                      isDisabled={!running || busy || cooling}
+                      isDisabled={!running || busy || cooling || quotaExhausted}
                       onPress={() => {
                         setSolvedCaptcha(null);
                         setConfirmTarget(machine);
@@ -511,6 +529,8 @@ export default function ShareView({ token, linkName }: { token: string; linkName
                           <Loader2 aria-hidden size={16} className="mr-2 animate-spin" />
                           換 IP 執行中…
                         </>
+                      ) : quotaExhausted ? (
+                        "今日額度已用完"
                       ) : cooling ? (
                         `冷卻中 ${formatRemaining(remainingMs)}`
                       ) : (
@@ -520,7 +540,11 @@ export default function ShareView({ token, linkName }: { token: string; linkName
                         </>
                       )}
                     </Button>
-                    {!running && !cooling ? (
+                    {quotaExhausted ? (
+                      <p className="mt-2 text-center text-xs text-muted">
+                        今日額度已用完（{dailyUsage!.limit} 次），請明天再試
+                      </p>
+                    ) : !running && !cooling ? (
                       <p className="mt-2 text-center text-xs text-muted">
                         機器須處於運行中狀態才能更換 IP
                       </p>

@@ -6,6 +6,7 @@ import {
   createShareLink,
   listMachines,
   listShareLinks,
+  shareQuotaDay,
 } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
@@ -15,6 +16,7 @@ import { requireApiSession } from "@/server/api-guard";
 const MAX_BODY_BYTES = 10240;
 const MAX_COOLDOWN_MINUTES = 1440;
 const MAX_MACHINES_PER_LINK = 50;
+const MAX_DAILY_LIMIT = 10000;
 
 /** 24 位元組隨機值的 base64url（32 字元，192 bits 熵），作為網址中的憑證。 */
 function generateShareToken() {
@@ -31,7 +33,7 @@ export async function GET(request: Request): Promise<Response> {
   const denied = await requireApiSession(request);
   if (denied) return denied;
   const env = await getEnv();
-  return jsonResponse({ links: await listShareLinks(env.DB) });
+  return jsonResponse({ links: await listShareLinks(env.DB, shareQuotaDay()) });
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -55,6 +57,10 @@ export async function POST(request: Request): Promise<Response> {
   if (!Number.isInteger(cooldownMinutes) || cooldownMinutes < 0 || cooldownMinutes > MAX_COOLDOWN_MINUTES) {
     return errorResponse(400, `冷卻分鐘數須為 0–${MAX_COOLDOWN_MINUTES} 的整數。`);
   }
+  const dailyLimit = Number(body.dailyLimit ?? 0);
+  if (!Number.isInteger(dailyLimit) || dailyLimit < 0 || dailyLimit > MAX_DAILY_LIMIT) {
+    return errorResponse(400, `每日上限須為 0–${MAX_DAILY_LIMIT} 的整數（0 表示不限）。`);
+  }
   const rawMachineIds: unknown[] = Array.isArray(body.machineIds) ? body.machineIds : [];
   const machineIds = [...new Set(rawMachineIds.map(value => Number(value)))];
   if (machineIds.length === 0) {
@@ -73,7 +79,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const token = generateShareToken();
-  const created = await createShareLink(env.DB, { name: body.name, token, cooldownMinutes, machineIds });
+  const created = await createShareLink(env.DB, { name: body.name, token, cooldownMinutes, machineIds, dailyLimit });
   if (!created) {
     return errorResponse(409, "連結建立失敗，請重試。");
   }
@@ -96,6 +102,7 @@ export async function POST(request: Request): Promise<Response> {
       token,
       url: `/share/${token}`,
       cooldownMinutes,
+      dailyLimit,
       machines: machineIds,
     },
   }, { status: 201 });

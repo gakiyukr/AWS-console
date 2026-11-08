@@ -362,7 +362,7 @@ export async function getMachinesDdnsMap(db) {
 
 // ─── 分享連結（對外一鍵換 IP） ─────────────────────────────
 
-const SHARE_LINK_COLUMNS = "id, name, token, cooldown_minutes AS cooldownMinutes, enabled, created_at AS createdAt, updated_at AS updatedAt, last_used_at AS lastUsedAt";
+const SHARE_LINK_COLUMNS = "id, name, token, cooldown_minutes AS cooldownMinutes, daily_limit AS dailyLimit, enabled, created_at AS createdAt, updated_at AS updatedAt, last_used_at AS lastUsedAt";
 
 function normalizeShareLink(row) {
   return row ? { ...row, enabled: Boolean(row.enabled) } : null;
@@ -393,7 +393,7 @@ export async function getShareLinkById(db, id) {
  * 依 token 取得連結與其綁定機器（含各機器的最後觸發時間）。
  * token 是 URL 即憑證，以明文比對 UNIQUE 索引；不存在回 null。
  * @returns {Promise<{id:number, name:string, token:string, cooldownMinutes:number,
- *   enabled:boolean, createdAt:string, updatedAt:string, lastUsedAt:string|null,
+ *   dailyLimit:number, enabled:boolean, createdAt:string, updatedAt:string, lastUsedAt:string|null,
  *   machines:Array<{id:number, name:string, region:string, lastTriggeredAt:number|null}>}|null>}
  */
 export async function getShareLinkByToken(db, token) {
@@ -420,12 +420,24 @@ export async function getShareLinkByToken(db, token) {
 }
 
 /**
- * 取得全部分享連結，每條附帶綁定機器的名稱與地區（管理頁顯示用）。
+ * 取得全部分享連結，每條附帶綁定機器的名稱、地區與今日已用配額（管理頁顯示用）。
+ * @param {D1Database} db
+ * @param {string} [day] 當日日期字串（shareQuotaDay()）；省略則不附 dailyUsed
  */
-export async function listShareLinks(db) {
+export async function listShareLinks(db, day = null) {
   const { results } = await db
     .prepare(`SELECT ${SHARE_LINK_COLUMNS} FROM share_links ORDER BY id`)
     .all();
+  const usageMap = new Map();
+  if (day) {
+    const { results: usage } = await db
+      .prepare("SELECT share_link_id AS shareLinkId, count FROM share_link_daily_usage WHERE day = ?1")
+      .bind(day)
+      .all();
+    for (const row of usage) {
+      usageMap.set(Number(row.shareLinkId), Number(row.count));
+    }
+  }
   const { results: bindings } = await db
     .prepare(`SELECT share_link_id AS shareLinkId, sm.machine_id AS id,
       COALESCE(NULLIF(m.name, ''), m.instance_id) AS name, m.instance_id AS instanceId, m.region
@@ -435,6 +447,7 @@ export async function listShareLinks(db) {
     .all();
   return results.map((link) => ({
     ...normalizeShareLink(link),
+    ...(day ? { dailyUsed: usageMap.get(link.id) || 0 } : {}),
     machines: bindings
       .filter(binding => binding.shareLinkId === link.id)
       .map(({ id, name, region, instanceId }) => ({ id, name, region, instanceId })),
@@ -474,11 +487,11 @@ async function bindShareLinkMachines(db, shareLinkId, machineIds) {
  * 建立連結；token 撞 UNIQUE 時回 null（呼叫端回 409/500 語意）。
  * @returns {Promise<{id:number}|null>}
  */
-export async function createShareLink(db, { name, token, cooldownMinutes, machineIds }) {
+export async function createShareLink(db, { name, token, cooldownMinutes, machineIds, dailyLimit = 0 }) {
   try {
     const result = await db
-      .prepare("INSERT INTO share_links (name, token, cooldown_minutes) VALUES (?1, ?2, ?3)")
-      .bind(name, token, cooldownMinutes)
+      .prepare("INSERT INTO share_links (name, token, cooldown_minutes, daily_limit) VALUES (?1, ?2, ?3, ?4)")
+      .bind(name, token, cooldownMinutes, dailyLimit)
       .run();
     const id = result.meta.last_row_id;
     await bindShareLinkMachines(db, id, machineIds);
@@ -493,7 +506,7 @@ export async function createShareLink(db, { name, token, cooldownMinutes, machin
 
 /**
  * 部分更新連結；僅更新有提供的欄位。回傳更新後的連結，不存在回 null。
- * @param {{ name?: string, cooldownMinutes?: number, enabled?: boolean, machineIds?: number[] }} updates
+ * @param {{ name?: string, cooldownMinutes?: number, enabled?: boolean, machineIds?: number[], dailyLimit?: number }} updates
  */
 export async function updateShareLink(db, id, updates) {
   const sets = [];
@@ -505,6 +518,10 @@ export async function updateShareLink(db, id, updates) {
   if (updates.cooldownMinutes !== undefined) {
     sets.push("cooldown_minutes = ?");
     bindings.push(updates.cooldownMinutes);
+  }
+  if (updates.dailyLimit !== undefined) {
+    sets.push("daily_limit = ?");
+    bindings.push(updates.dailyLimit);
   }
   if (updates.enabled !== undefined) {
     sets.push("enabled = ?");
@@ -559,6 +576,66 @@ export async function getShareLinkMachineBinding(db, shareLinkId, machineId) {
 /** 觸發換 IP 後更新連結的最後使用時間。 */
 export async function touchShareLinkUsed(db, id) {
   await db.prepare("UPDATE share_links SET last_used_at = datetime('now') WHERE id = ?1").bind(id).run();
+}
+
+// ─── 分享連結每日配額 ──────────────────────────────────────
+
+/** 台灣時間（UTC+8）的今日日期字串，作為每日配額的邊界。 */
+export function shareQuotaDay(now = Date.now()) {
+  return new Date(now + 8 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/**
+ * 原子搶取每日配額：成功回 { claimed: true, used }；配額滿回 { claimed: false, used }。
+ * 單條 UPSERT + 條件 + RETURNING，併發安全。
+ * @param {D1Database} db
+ * @param {number} shareLinkId
+ * @param {string} day shareQuotaDay() 的日期字串
+ * @param {number} limit 每日上限（>0）
+ * @returns {Promise<{ claimed: boolean, used: number }>}
+ */
+export async function claimShareDailyQuota(db, shareLinkId, day, limit) {
+  const result = await db
+    .prepare(`INSERT INTO share_link_daily_usage (share_link_id, day, count)
+      VALUES (?1, ?2, 1)
+      ON CONFLICT(share_link_id, day) DO UPDATE SET count = count + 1
+      WHERE count < ?3
+      RETURNING count`)
+    .bind(shareLinkId, day, limit)
+    .first();
+  if (result) {
+    return { claimed: true, used: Number(result.count) };
+  }
+  // 配額滿：回目前已用數
+  const row = await db
+    .prepare("SELECT count FROM share_link_daily_usage WHERE share_link_id = ?1 AND day = ?2")
+    .bind(shareLinkId, day)
+    .first();
+  return { claimed: false, used: Number(row?.count ?? limit) };
+}
+
+/**
+ * 讀取連結今日配額使用量。
+ * @returns {Promise<{ limit: number, used: number }>}
+ */
+export async function getShareLinkDailyUsage(db, shareLinkId, day) {
+  const link = await db
+    .prepare("SELECT daily_limit FROM share_links WHERE id = ?1")
+    .bind(shareLinkId)
+    .first();
+  const row = await db
+    .prepare("SELECT count FROM share_link_daily_usage WHERE share_link_id = ?1 AND day = ?2")
+    .bind(shareLinkId, day)
+    .first();
+  return { limit: Number(link?.daily_limit ?? 0), used: Number(row?.count ?? 0) };
+}
+
+/** 清除非當日的每日計數列（寫入端 best-effort 呼叫，維持表輕量）。 */
+export async function cleanupOldDailyUsage(db, keepDay) {
+  await db
+    .prepare("DELETE FROM share_link_daily_usage WHERE day <> ?1")
+    .bind(keepDay)
+    .run();
 }
 
 // ─── 全域設定（KV） ────────────────────────────────────────

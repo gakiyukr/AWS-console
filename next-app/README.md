@@ -8,7 +8,9 @@
 - 管理 D1 清單內 EC2 執行個體的即時狀態，並執行開機、關機、重啟、終止，
   以及「更換公網 IP」（stop → start）。
 - 以「分享連結」對外發布免登入的公開網頁，讓訪客對綁定機器一鍵更換公網 IP；
-  可一頁綁一機或多機，冷卻時間由連結自訂（0 表示不限）。
+  可一頁綁一機或多機，冷卻時間由連結自訂（0 表示不限），並可設定**每日更換
+  次數上限**（跨綁定機器合計，0 表示不限；台灣時間為一日邊界），訪客頁會
+  顯示今日已用次數、額度滿時按鈕停用。
 - 分享頁可自後台開啟人機驗證，支援多渠道備援：[Cap](https://trycap.dev/)
   （自架實例）、Cloudflare Turnstile、hCaptcha；訪客點擊「一鍵換 IP」前須先
   通過驗證，憑證由伺服端 siteverify 驗證。渠道與密鑰於設定後臺管理（加密存 D1）。
@@ -309,13 +311,14 @@ Allow group <group> to read instance-agent-family in compartment <compartment>
 - `/api/lightsail/*`：Lightsail 的 Region、Blueprint、Bundle、執行個體清單
   （`instances`，供加入既有機器）與部署流程。
 - `/api/share-links`：分享連結（對外一鍵換 IP 公開頁）管理；建立時由伺服端
-  產生 token（明文儲存，URL 即憑證），`/:id` 支援 PATCH（名稱／冷卻／啟停用）
-  與 DELETE。
+  產生 token（明文儲存，URL 即憑證），`/:id` 支援 PATCH（名稱／冷卻／每日上限
+  ／啟停用）與 DELETE。列表附每連結的 `dailyLimit` 與 `dailyUsed`。
 - `/api/share/:token/*`：**公開端點（無須登入，token 即憑證）**——`machines`
   回傳綁定機器的即時狀態與公網 IP（含 `captchaEnabled`）；`rotate` 以 SSE 串流
   觸發換 IP（stop → start），並輪詢回報新公網 IP。冷卻按「連結×機器」以條件式
-  UPDATE 原子搶鎖強制（429，憑證不消費）；token 無效或連結停用一律 404，不洩漏
-  存在性。人機驗證啟用時，`rotate` 需攜帶 `captchaToken` 與 `captchaProvider`
+  UPDATE 原子搶鎖強制（429，憑證不消費）；每日配額以 UPSERT＋條件
+  RETURNING 原子搶額（429，預檢不通過時完全不消耗）。token 無效或連結停用
+  一律 404，不洩漏存在性。人機驗證啟用時，`rotate` 需攜帶 `captchaToken` 與 `captchaProvider`
   （cap／turnstile／hcaptcha），由伺服端 siteverify 驗證。
 - `/api/share/cap/*`：**公開端點（相容保留）**——本地 Cap PoW 流程的
   `challenge`／`redeem`。多渠道 siteverify 模式下 rotate 走 `/api/captcha-settings`
@@ -397,6 +400,9 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
   （PEM 加密）、執行個體別名表，及 operation_log 的 OCI 關聯欄位。
 - `0018_proxies.sql`：出口代理池（HTTP／HTTPS／SOCKS5，密碼加密），並為
   `aws_accounts`／`oci_accounts` 加 `proxy_id` 綁定（刪除代理時自動回直連）。
+- `0020_share_link_daily_quota.sql`：分享連結每日配額——`share_links.daily_limit`
+  欄位與 `share_link_daily_usage` 計數表（(share_link_id, day) 主鍵，day 為
+  UTC+8 日期字串）。
 - `0019_ddns_multi_domains.sql`：DDNS 改為多域名（`ddns_domains`）＋前綴綁定
   （`ddns_bindings`，`UNIQUE(domain_id, prefix)`）；舊單列設定與
   `machines.ddns_hostname` 自動遷移後移除舊表／舊欄。

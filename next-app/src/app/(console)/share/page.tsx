@@ -27,6 +27,8 @@ interface ShareLinkRow {
   name: string
   token: string
   cooldownMinutes: number
+  dailyLimit: number
+  dailyUsed?: number
   enabled: boolean
   createdAt: string
   updatedAt: string
@@ -60,12 +62,12 @@ export default function ShareLinksPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", cooldownMinutes: "5" });
+  const [form, setForm] = useState({ name: "", cooldownMinutes: "5", dailyLimit: "0" });
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   // 編輯連結
   const [editTarget, setEditTarget] = useState<ShareLinkRow | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-  const [editForm, setEditForm] = useState({ name: "", cooldownMinutes: "5" });
+  const [editForm, setEditForm] = useState({ name: "", cooldownMinutes: "5", dailyLimit: "0" });
   const [editSelectedIds, setEditSelectedIds] = useState<number[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -123,6 +125,7 @@ export default function ShareLinksPage() {
         body: JSON.stringify({
           name: form.name,
           cooldownMinutes: Number(form.cooldownMinutes),
+          dailyLimit: Number(form.dailyLimit),
           machineIds: selectedIds,
         }),
       });
@@ -132,7 +135,7 @@ export default function ShareLinksPage() {
       const payload = await readJson<{ link?: { url?: string } }>(response);
       toast.success(`分享連結已建立：${payload.link?.url || ""}`);
       setCreateOpen(false);
-      setForm({ name: "", cooldownMinutes: "5" });
+      setForm({ name: "", cooldownMinutes: "5", dailyLimit: "0" });
       setSelectedIds([]);
       await loadData();
     } catch (error) {
@@ -144,7 +147,7 @@ export default function ShareLinksPage() {
 
   function openEdit(link: ShareLinkRow) {
     setEditTarget(link);
-    setEditForm({ name: link.name, cooldownMinutes: String(link.cooldownMinutes) });
+    setEditForm({ name: link.name, cooldownMinutes: String(link.cooldownMinutes), dailyLimit: String(link.dailyLimit) });
     setEditSelectedIds(link.machines.map(machine => machine.id));
     setEditOpen(true);
   }
@@ -164,6 +167,7 @@ export default function ShareLinksPage() {
         body: JSON.stringify({
           name: editForm.name.trim(),
           cooldownMinutes: Number(editForm.cooldownMinutes),
+          dailyLimit: Number(editForm.dailyLimit),
           machineIds: editSelectedIds,
         }),
       });
@@ -307,6 +311,11 @@ export default function ShareLinksPage() {
                       return machine.instanceId || machine.name || "未命名機器";
                     }).join("、") || "—"}
                   </span>
+                  <span>
+                    每日上限：{link.dailyLimit > 0
+                      ? `${link.dailyLimit} 次${link.dailyUsed != null ? `（今日已用 ${link.dailyUsed}）` : ""}`
+                      : "不限"}
+                  </span>
                   <span>冷卻時間：{cooldownLabel(link.cooldownMinutes)}</span>
                   <span>建立時間：{formatDatetime(link.createdAt)}</span>
                   <span>最後使用：{formatDatetime(link.lastUsedAt)}</span>
@@ -359,6 +368,18 @@ export default function ShareLinksPage() {
                 <p className="text-xs text-muted">
                   同一台機器更換 IP 後，須等待此分鐘數才能再次由訪客觸發（0 表示不限）。
                 </p>
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="share-link-daily" className="text-sm font-medium">每日上限（次）</label>
+                <Input
+                  id="share-link-daily"
+                  type="number"
+                  min={0}
+                  max={10000}
+                  value={form.dailyLimit}
+                  onChange={event => setForm(previous => ({ ...previous, dailyLimit: event.target.value }))}
+                />
+                <p className="text-xs text-muted">此連結一天（台灣時間）最多更換幾次 IP，跨綁定機器合計（0 表示不限）。</p>
               </div>
               <div className="grid gap-2">
                 <span className="text-sm font-medium">綁定機器</span>
@@ -439,6 +460,18 @@ export default function ShareLinksPage() {
                 <p className="text-xs text-muted">
                   同一台機器更換 IP 後，須等待此分鐘數才能再次由訪客觸發（0 表示不限）。
                 </p>
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="edit-share-link-daily" className="text-sm font-medium">每日上限（次）</label>
+                <Input
+                  id="edit-share-link-daily"
+                  type="number"
+                  min={0}
+                  max={10000}
+                  value={editForm.dailyLimit}
+                  onChange={event => setEditForm(previous => ({ ...previous, dailyLimit: event.target.value }))}
+                />
+                <p className="text-xs text-muted">此連結一天（台灣時間）最多更換幾次 IP，跨綁定機器合計（0 表示不限）。</p>
               </div>
               <div className="grid gap-2">
                 <span className="text-sm font-medium">綁定機器</span>

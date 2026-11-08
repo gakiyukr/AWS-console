@@ -82,6 +82,8 @@ export default function NewInstancePage() {
   const [vcnId, setVcnId] = useState("");
   const [subnetId, setSubnetId] = useState("");
   const [assignPublicIp, setAssignPublicIp] = useState(true);
+  // 開機即啟用 IPv6：建立後對 primary VNIC 執行完整開通（冪等）
+  const [enableIpv6, setEnableIpv6] = useState(false);
   const [sshPublicKey, setSshPublicKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -280,6 +282,7 @@ export default function NewInstancePage() {
           bootVolumeSizeInGBs: bootVolumeGB,
           subnetOcid: subnetId,
           assignPublicIp: canAssignPublicIp ? assignPublicIp : false,
+          ipv6: enableIpv6,
           sshPublicKey,
         }),
       });
@@ -541,6 +544,18 @@ export default function NewInstancePage() {
                     />
                   </div>
                 ) : null}
+                <div className="flex items-center justify-between rounded-lg border border-divider p-3 sm:col-span-2">
+                  <div className="space-y-0.5 pr-3">
+                    <Label htmlFor="enable-ipv6-switch" className="text-sm font-medium cursor-pointer">啟用 IPv6</Label>
+                    <p className="text-xs text-muted">建立後自動完成 IPv6 開通（子網 /64 → 路由 → 防火牆 → 指派位址）；開通後無法關閉</p>
+                  </div>
+                  <Switch
+                    id="enable-ipv6-switch"
+                    checked={enableIpv6}
+                    onCheckedChange={setEnableIpv6}
+                    disabled={submitting}
+                  />
+                </div>
                 <div className="grid gap-2 sm:col-span-2">
                   <Label htmlFor="new-ssh" className="text-sm font-medium">SSH 公鑰</Label>
                   <Textarea

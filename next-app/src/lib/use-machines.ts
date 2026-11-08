@@ -34,6 +34,7 @@ export function useMachines(platform: Platform) {
   const [rebootOpen, setRebootOpen] = useState(false);
   const [rebootIpTarget, setRebootIpTarget] = useState<MachineRow | null>(null);
   const [rebootIpOpen, setRebootIpOpen] = useState(false);
+  const [rebootIpIncludeIpv6, setRebootIpIncludeIpv6] = useState(false);
   const [terminateTarget, setTerminateTarget] = useState<MachineRow | null>(null);
   const [terminateOpen, setTerminateOpen] = useState(false);
   const [ipv6Target, setIpv6Target] = useState<MachineRow | null>(null);
@@ -124,6 +125,7 @@ export function useMachines(platform: Platform) {
   function requestRebootIp(machine: MachineRow) {
     setRebootIpTarget(machine);
     setRebootIpOpen(true);
+    setRebootIpIncludeIpv6(false);
   }
 
   function requestIpv6(machine: MachineRow) {
@@ -166,9 +168,14 @@ export function useMachines(platform: Platform) {
     setRebootIpPending(true);
     setActionPendingId(machine.id);
     try {
-      const response = await fetch(`/api/machines/${machine.id}/reboot-ip`, { method: "POST" });
+      const response = await fetch(`/api/machines/${machine.id}/reboot-ip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ includeIpv6: rebootIpIncludeIpv6 }),
+      });
       if (!response.ok) throw new Error(await readError(response));
-      toast.success("已送出停止→啟動請求（將更換公網 IP）。");
+      const payload = await readJson<{ message?: string }>(response);
+      toast.success(payload.message || "已送出停止→啟動請求（將更換公網 IP）。");
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "更換 IP 失敗");
     } finally {
@@ -244,7 +251,15 @@ export function useMachines(platform: Platform) {
       stop: { target: stopTarget, open: stopOpen, setOpen: setStopOpen, confirm: confirmStop },
       reboot: { target: rebootTarget, open: rebootOpen, setOpen: setRebootOpen, confirm: confirmReboot },
       terminate: { target: terminateTarget, open: terminateOpen, setOpen: setTerminateOpen, confirm: confirmTerminate },
-      rebootIp: { target: rebootIpTarget, open: rebootIpOpen, setOpen: setRebootIpOpen, confirm: confirmRebootIp, pending: rebootIpPending },
+      rebootIp: {
+        target: rebootIpTarget,
+        open: rebootIpOpen,
+        setOpen: setRebootIpOpen,
+        confirm: confirmRebootIp,
+        pending: rebootIpPending,
+        includeIpv6: rebootIpIncludeIpv6,
+        setIncludeIpv6: setRebootIpIncludeIpv6,
+      },
       ipv6: { target: ipv6Target, open: ipv6Open, setOpen: setIpv6Open, confirm: confirmIpv6, pending: ipv6Pending },
       remove: { target: removeTarget, open: removeOpen, setOpen: setRemoveOpen, confirm: confirmRemove, pending: removing },
     },

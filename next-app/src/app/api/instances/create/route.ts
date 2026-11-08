@@ -5,6 +5,7 @@ import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.j
 import { validateInput } from "@/server/utils/validate.js";
 import { resolveOciAccount, toOciAccountHttpError } from "@/server/utils/oci-account.js";
 import { launchInstance } from "@/server/utils/oci-launch.js";
+import { enableInstanceIpv6, getPrimaryVnic } from "@/server/utils/oci-network.js";
 import { OciApiError, ociFailureMessage } from "@/server/utils/oci-error.js";
 import { appendOperationLog } from "@/server/utils/db.js";
 import { getEnv } from "@/server/env";
@@ -63,6 +64,8 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse(400, `開機磁碟大小須為 ${MIN_BOOT_VOLUME_GB}–${MAX_BOOT_VOLUME_GB} GB`);
   }
   const assignPublicIp = body.assignPublicIp !== false;
+  // 開機即啟用 IPv6：launch 成功後對 primary VNIC 執行完整開通（冪等）
+  const enableIpv6 = body.ipv6 === true;
 
   let ocpus: number | undefined;
   let memoryInGBs: number | undefined;
@@ -109,6 +112,41 @@ export async function POST(request: Request): Promise<Response> {
     );
 
     const instanceId = String(instance?.id || "");
+    let ipv6Warning: string | null = null;
+    let ipv6Address = "";
+    if (enableIpv6) {
+      try {
+        // primary VNIC 於 launch 後數秒內出現；輪詢等待後執行冪等開通
+        let vnicInfo = null;
+        for (let attempt = 0; attempt < 12 && !vnicInfo; attempt += 1) {
+          vnicInfo = await getPrimaryVnic(
+            { account: ociAccount, privateKeyPem },
+            { instanceId, compartmentOcid: ociAccount.compartmentOcid },
+          );
+          if (!vnicInfo) {
+            await new Promise(resolve => setTimeout(resolve, 5_000));
+          }
+        }
+        if (!vnicInfo) {
+          throw new Error("等待 primary VNIC 逾時");
+        }
+        const v6Result = await enableInstanceIpv6(
+          { account: ociAccount, privateKeyPem },
+          {
+            compartmentOcid: ociAccount.compartmentOcid,
+            vnicId: vnicInfo.vnicId,
+            vnic: vnicInfo.vnic,
+            emit: () => {},
+          },
+        );
+        ipv6Address = v6Result.ipv6Address;
+        if (v6Result.warnings.length > 0) {
+          ipv6Warning = v6Result.warnings.join("；");
+        }
+      } catch (error) {
+        ipv6Warning = `IPv6 開通失敗（執行個體已建立）：${error instanceof Error ? error.message : String(error)}；可稍後用總覽頁的 IPv6 按鈕重試。`;
+      }
+    }
     try {
       await appendOperationLog(env.DB, {
         action: "create-instance",
@@ -135,7 +173,13 @@ export async function POST(request: Request): Promise<Response> {
       instanceId,
       displayName,
       lifecycleState: String(instance?.lifecycleState || "PROVISIONING"),
-      message: `「${displayName}」建立中（PROVISIONING），總覽頁會自動更新狀態。`,
+      ...(enableIpv6 ? { ipv6Address: ipv6Address || null } : {}),
+      ...(ipv6Warning ? { ipv6Warning } : {}),
+      message: ipv6Warning
+        ? `「${displayName}」建立中（PROVISIONING）；${ipv6Warning}`
+        : ipv6Address
+          ? `「${displayName}」建立中（PROVISIONING），IPv6 已指派：${ipv6Address}`
+          : `「${displayName}」建立中（PROVISIONING），總覽頁會自動更新狀態。`,
     });
   } catch (error) {
     if (error instanceof OciApiError) {

@@ -365,3 +365,64 @@ export function rotateIpFailureMessage(error) {
       : "更換公網 IP 未完成，且自動重新啟動未成功；請確認執行個體狀態後手動啟動。"
     : "執行個體操作失敗。";
 }
+
+/**
+ * 更換 EC2 機器的 IPv6 位址：Unassign 全部現有 v6 → Assign 一個新位址
+ * （EC2 自子網 /64 選址）。機器須已指派 IPv6（否則拋 409 語意錯誤）。
+ * @param {unknown} env 已注入 AWS 憑證的執行環境（awsEnv）
+ * @param {{ region: string, instanceId: string }} machine
+ * @returns {Promise<{ previousIp: string, newIp: string }>}
+ */
+export async function rotateEc2Ipv6(env, machine) {
+  const nic = parseInstanceNicInfo(
+    await ec2Query(machine.region, env, "DescribeInstances", {
+      "InstanceId.1": machine.instanceId,
+    }),
+  );
+  if (!nic.instanceId) {
+    const error = new Error("找不到執行個體。");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!nic.networkInterfaceId) {
+    const error = new Error("執行個體缺少主要網路介面，無法更換 IPv6。");
+    error.statusCode = 409;
+    throw error;
+  }
+  if (nic.ipv6Addresses.length === 0) {
+    const error = new Error("此機器尚未指派 IPv6，請先開通。");
+    error.statusCode = 409;
+    throw error;
+  }
+  const previousIp = nic.ipv6Addresses[0];
+
+  // 1. 解除全部現有 IPv6
+  await ec2Query(machine.region, env, "UnassignIpv6Addresses", {
+    "NetworkInterfaceId": nic.networkInterfaceId,
+    ...Object.fromEntries(
+      nic.ipv6Addresses.map((address, index) => [`Ipv6Addresses.${index + 1}`, address]),
+    ),
+  });
+
+  // 2. 指派一個新位址
+  await ec2Query(machine.region, env, "AssignIpv6Addresses", {
+    NetworkInterfaceId: nic.networkInterfaceId,
+    Ipv6AddressCount: "1",
+  });
+
+  // 3. 取回新位址（DescribeInstances 即時反映，保留少量重試）
+  let newIp = "";
+  for (let attempt = 0; attempt < 5 && !newIp; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    const updated = parseInstanceNicInfo(
+      await ec2Query(machine.region, env, "DescribeInstances", {
+        "InstanceId.1": machine.instanceId,
+      }),
+    );
+    newIp = updated.ipv6Addresses[0] || "";
+  }
+
+  return { previousIp, newIp };
+}

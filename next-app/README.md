@@ -32,6 +32,10 @@
   iptables 清理）、保留公網 IP 申請／綁定／釋放、建立執行個體（A1.Flex 上限、
   shape 過濾映像）。多 OCI 帳號以 API 簽章金鑰（PEM 加密）管理。
 - 建立及初始化 AWS Wavelength Zone 所需的子網、Carrier Gateway、路由表與安全群組。
+- 五種 IP 場景兩朵雲全覆蓋：①部署時只開 v4（預設）②部署時開 v4+v6
+  （EC2 checkbox／Lightsail 雙棧／OCI 建立後自動開通）③既有機器一鍵加 v6
+  ④既有機器換 v4（Lightsail 支援動態 IP stop→start 與靜態 IP 重配兩種）
+  ⑤既有機器 v4+v6 同時更換（換 IP 對話框勾選「同時更換 IPv6」）。
 - 以獨立工作流部署一般區域 EC2、Wavelength 執行個體、Lightsail 執行個體與 SSH forwarder。
 - 部署一般 EC2 時可選用 IPv6（完整開通 VPC/子網 CIDR、IGW 路由與安全群組規則）；
   機器總覽可對既有 EC2／Lightsail 機器一鍵開通 IPv6（EC2 指派後自動重開機一次）。

@@ -140,6 +140,8 @@ function generateCloudInitUserData(credential) {
  */
 export async function deployLightsailInstance(awsEnv, body, onProgress) {
   const { region, blueprint_id, bundle_id, instance_name, credential } = body;
+  // 選用旗標：沿用寬鬆解析（JSON 布林或字串），不進路由欄位白名單
+  const isIpv6Enabled = body?.ipv6 === true || body?.ipv6 === "true";
 
   onProgress("validating", { region, blueprintId: blueprint_id, bundleId: bundle_id });
 
@@ -157,8 +159,8 @@ export async function deployLightsailInstance(awsEnv, body, onProgress) {
       blueprintId: blueprint_id,
       bundleId: bundle_id,
       userData: encodedUserData,
-      // 雙棧（IPv4 + IPv6）；Lightsail 預設即 dualstack，此處顯式指定以免預設值變動
-      ipAddressType: "dualstack",
+      // ipAddressType：ipv4 或 dualstack（IPv6）；由部署表單的 IPv6 選項決定
+      ipAddressType: isIpv6Enabled ? "dualstack" : "ipv4",
       tags: [
         { key: "ManagedBy", value: "aws-console-lightsail" },
         { key: "DeployedAt", value: new Date().toISOString() },

@@ -75,6 +75,7 @@ export default function LightsailPage() {
     credentialType: "ssh_key" as "ssh_key" | "password",
     sshKeyId: null as number | null,
     rootPassword: "",
+    ipv6: false,
   });
   const [loadingKeys, setLoadingKeys] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
@@ -241,6 +242,7 @@ export default function LightsailPage() {
       blueprint_id: form.blueprintId,
       bundle_id: form.bundleId,
       instance_name: form.instanceName,
+      ipv6: form.ipv6,
       credential_type: form.credentialType,
       ...(form.credentialType === "ssh_key"
         ? { ssh_key_id: form.sshKeyId }
@@ -427,6 +429,20 @@ export default function LightsailPage() {
               onChange={(e) => setForm(previous => ({ ...previous, instanceName: e.target.value }))}
               disabled={busy}
             />
+          </div>
+
+          {/* IPv6 選項 */}
+          <div className="sm:col-span-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={form.ipv6}
+                disabled={busy}
+                onChange={(e) => setForm(previous => ({ ...previous, ipv6: e.target.checked }))}
+              />
+              啟用 IPv6（雙棧：IPv4 + IPv6；位址由 Lightsail 自動指派）
+            </label>
           </div>
 
           {/* 登入憑證：公鑰取自 D1 公鑰庫，密碼僅存在於本次請求 */}

@@ -211,7 +211,9 @@ export async function rotateInstanceIpv6(ctx, { compartmentOcid, vnicId, vnic, e
   return { previousIp, newIp, opened: false, warnings };
 }
 
-export async function enableInstanceIpv6(ctx, { compartmentOcid, vnicId, vnic, emit }) {
+export async function enableInstanceIpv6(ctx, options) {
+  // emit 以預設 no-op 解構：呼叫端（路由 SSE／建機流程）可省略
+  const { compartmentOcid, vnicId, vnic, emit = () => {} } = options || {};
   const api = request(ctx);
   const warnings = [];
 

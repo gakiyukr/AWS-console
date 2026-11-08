@@ -65,6 +65,9 @@ const OPERATION_STAGE_LABELS: Record<string, string> = {
   "security-list": "安全清單",
   assign: "指派位址",
   lookup: "查詢現有 IP",
+  list: "檢查現有 IPv6",
+  release: "釋放舊 IPv6",
+  enable: "執行 IPv6 開通",
   delete: "刪除舊 IP",
   create: "配置新 IP",
   "agent-submit": "送出 Agent 指令",
@@ -78,7 +81,7 @@ const POWER_POLL_MAX_ATTEMPTS = 40;
 type PendingPowerAction = "start" | "stop" | "force-stop" | "reboot" | "force-reboot";
 
 interface PendingOperation {
-  kind: "reboot-ip" | "ipv6" | "firewall" | "host-firewall"
+  kind: "reboot-ip" | "ipv6" | "rotate-ipv6" | "firewall" | "host-firewall"
   instance: InstanceRow
 }
 
@@ -557,6 +560,15 @@ export default function InstancesPage() {
                                     <Button
                                       size="sm"
                                       variant="ghost"
+                                      aria-label="換 IPv6"
+                                      isDisabled={busy}
+                                      onPress={() => setOperation({ kind: "rotate-ipv6", instance: row })}
+                                    >
+                                      <RefreshCw aria-hidden size={14} />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
                                       aria-label="開防火牆"
                                       isDisabled={busy}
                                       onPress={() => setOperation({ kind: "firewall", instance: row })}
@@ -863,6 +875,7 @@ function operationTitle(kind: PendingOperation["kind"] | undefined) {
   switch (kind) {
     case "reboot-ip": return "更換公網 IP";
     case "ipv6": return "一鍵加 IPv6";
+    case "rotate-ipv6": return "一鍵換 IPv6";
     case "firewall": return "一鍵開防火牆";
     case "host-firewall": return "清理主機防火牆 (iptables)";
     default: return "操作確認";
@@ -895,6 +908,14 @@ function OperationWarning({
         <p className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs">
           注意：IPv6 於 VCN／子網層級開通後即無法關閉。
         </p>
+      </div>
+    );
+  }
+  if (kind === "rotate-ipv6") {
+    return (
+      <div className="grid gap-2 text-sm">
+        <p>刪除 VNIC 現有的 IPv6 位址並重新指派（Oracle 自子網 /64 選新址），不需重開機。</p>
+        <p className="text-xs text-muted">若執行個體尚未指派 IPv6，將自動執行完整開通流程（等同「一鍵加 IPv6」）。使用中的 IPv6 連線會中斷。</p>
       </div>
     );
   }

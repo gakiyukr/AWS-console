@@ -26,8 +26,9 @@
   依平台分流（Lightsail 走 GetInstances／StartInstance／StopInstance／
   RebootInstance／DeleteInstance）；Lightsail 不支援「更換公網 IP」。
 - Oracle Cloud（OCI）整合：執行個體列表（即時 + 自訂別名）、五種電源操作
-  （含強制關機／重啟）、更換臨時公網 IP、一鍵 IPv6（VCN /56 → 子網 /64 →
-  路由 → 安全清單 → VNIC 指派）、一鍵防火牆（Security List 全開 + 主機
+  （含強制關機／重啟）、更換臨時公網 IP（v4）、一鍵 IPv6 開通（VCN /56 →
+  子網 /64 → 路由 → 安全清單 → VNIC 指派）、**一鍵換 IPv6**（刪除現有位址
+  重新指派，未開通時自動先開通）、一鍵防火牆（Security List 全開 + 主機
   iptables 清理）、保留公網 IP 申請／綁定／釋放、建立執行個體（A1.Flex 上限、
   shape 過濾映像）。多 OCI 帳號以 API 簽章金鑰（PEM 加密）管理。
 - 建立及初始化 AWS Wavelength Zone 所需的子網、Carrier Gateway、路由表與安全群組。

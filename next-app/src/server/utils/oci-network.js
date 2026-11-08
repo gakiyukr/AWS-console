@@ -152,6 +152,65 @@ function expandIpv6Hextets(address) {
  * @param {(progress: {stage: string, message: string}) => void} [emit] SSE 進度推送
  * @returns {Promise<{ ipv6Address: string, warnings: string[] }>}
  */
+/**
+ * 更換 VNIC 的 IPv6 位址：刪除現有 IPv6 物件 → 重新指派（Oracle 自子網 /64 選新址）。
+ * 若 VNIC 尚無任何 IPv6（或子網／VCN 未開通 IPv6），自動走 enableInstanceIpv6
+ * 完整開通流程（＝首次指派）。
+ * @param {{ account: object, privateKeyPem: string }} ctx
+ * @param {{ compartmentOcid: string, vnicId: string, vnic?: object, emit?: Function }} options
+ * @returns {Promise<{ previousIp: string, newIp: string, opened: boolean, warnings: string[] }>}
+ */
+export async function rotateInstanceIpv6(ctx, { compartmentOcid, vnicId, vnic, emit }) {
+  const api = request(ctx);
+  const warnings = [];
+
+  // 列出現有 IPv6 物件
+  emit?.({ stage: "list", message: "檢查 VNIC 現有的 IPv6 位址…" });
+  const existing = await api({
+    method: "GET",
+    path: "/20160918/ipv6",
+    query: { vnicId },
+  });
+  const existingV6 = (Array.isArray(existing) ? existing : []).filter(item => item?.id && item?.address);
+
+  if (existingV6.length === 0) {
+    // 尚無 IPv6：視同首次開通（冪等六步流程）
+    emit?.({ stage: "enable", message: "VNIC 尚無 IPv6，執行完整開通流程…" });
+    const result = await enableInstanceIpv6(ctx, { compartmentOcid, vnicId, vnic, emit });
+    return {
+      previousIp: "",
+      newIp: result.ipv6Address,
+      opened: true,
+      warnings: [...result.warnings, "原先未指派 IPv6，已執行首次開通。"],
+    };
+  }
+
+  const previousIp = existingV6[0].address;
+
+  // 刪除現有 IPv6 物件（全部刪除後重新指派一個，確保拿到新位址）
+  emit?.({ stage: "release", message: `釋放現有 IPv6 位址（${existingV6.length} 個）…` });
+  for (const item of existingV6) {
+    await api({
+      method: "DELETE",
+      path: `/20160918/ipv6/${encodeURIComponent(item.id)}`,
+    });
+  }
+
+  // 重新指派（未指定 ipAddress，Oracle 自子網 /64 選新址）
+  emit?.({ stage: "assign", message: "指派新的 IPv6 位址…" });
+  const assigned = await api({
+    method: "POST",
+    path: "/20160918/ipv6",
+    body: { vnicId },
+  });
+  const newIp = String(assigned?.address || "");
+  if (!newIp) {
+    throw new OciApiError("IPv6 重新指派失敗（OCI 未回傳位址）", 502);
+  }
+
+  return { previousIp, newIp, opened: false, warnings };
+}
+
 export async function enableInstanceIpv6(ctx, { compartmentOcid, vnicId, vnic, emit }) {
   const api = request(ctx);
   const warnings = [];

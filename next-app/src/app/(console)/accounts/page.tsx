@@ -15,6 +15,7 @@ import { regionLabel } from "@/lib/regions";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { OCI_REGIONS } from "@/lib/oci-regions";
 import { CustomSelect } from "@/components/ui/select";
 
 // ─── AWS 帳號定義 ───────────────────────────────────────────
@@ -882,13 +883,13 @@ export default function AccountsPage() {
                     </div>
                     <div className="grid gap-2">
                       <label htmlFor="oci-region" className="text-sm font-medium">Region（home region）</label>
-                      <Input
-                        id="oci-region"
-                        autoComplete="off"
-                        placeholder="ap-osaka-1"
+                      <CustomSelect
                         value={ociAccountForm.region}
-                        onChange={event => updateOciField("region", event.target.value)}
+                        onChange={value => updateOciField("region", value)}
+                        placeholder="選擇區域"
+                        options={OCI_REGIONS}
                       />
+                      <p className="text-xs text-muted">請選擇 API 金鑰所屬的 home region（與 OCI 主控台右上角顯示一致）。</p>
                     </div>
                   </div>
                   <div className="grid gap-2">

@@ -323,16 +323,18 @@ export default function Ec2OverviewPage() {
         • 自動啟動執行個體
         <br />
         • 分配新的公網 IP／DNS
-        <div className="mt-3 flex items-center gap-2">
-          <input
-            id="reboot-ip-include-ipv6"
-            type="checkbox"
-            className="h-4 w-4"
-            checked={dialogs.rebootIp.includeIpv6}
-            onChange={event => dialogs.rebootIp.setIncludeIpv6(event.target.checked)}
-          />
-          <label htmlFor="reboot-ip-include-ipv6" className="text-sm">同時更換 IPv6 位址</label>
-        </div>
+        {!dialogs.rebootIp.target?.isWavelength ? (
+          <div className="mt-3 flex items-center gap-2">
+            <input
+              id="reboot-ip-include-ipv6"
+              type="checkbox"
+              className="h-4 w-4"
+              checked={dialogs.rebootIp.includeIpv6}
+              onChange={event => dialogs.rebootIp.setIncludeIpv6(event.target.checked)}
+            />
+            <label htmlFor="reboot-ip-include-ipv6" className="text-sm">同時更換 IPv6 位址</label>
+          </div>
+        ) : null}
       </ConfirmDialog>
 
       <ConfirmDialog

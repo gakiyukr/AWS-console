@@ -40,8 +40,8 @@ export async function POST(
   if (!machine) {
     return errorResponse(400, "指定的機器不在清單內。");
   }
-  if (machine.isWavelength) {
-    return errorResponse(400, "Wavelength 機器沒有常規公網 IPv4，不支援更換。");
+  if (machine.isWavelength && includeIpv6) {
+    return errorResponse(400, "Wavelength Zone 不支援 IPv6，無法同時更換 IPv6。");
   }
 
   let awsEnv: Awaited<ReturnType<typeof resolveAwsAccount>>["awsEnv"];

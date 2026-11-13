@@ -171,7 +171,7 @@ export function useMachines(platform: Platform) {
       const response = await fetch(`/api/machines/${machine.id}/reboot-ip`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ includeIpv6: rebootIpIncludeIpv6 }),
+        body: JSON.stringify({ includeIpv6: rebootIpIncludeIpv6 && !machine.isWavelength }),
       });
       if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<{ message?: string }>(response);

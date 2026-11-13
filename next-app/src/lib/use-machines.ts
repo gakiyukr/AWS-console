@@ -129,6 +129,7 @@ export function useMachines(platform: Platform) {
   }
 
   function requestIpv6(machine: MachineRow) {
+    if (machine.isWavelength) return;
     setIpv6Target(machine);
     setIpv6Open(true);
   }

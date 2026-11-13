@@ -95,6 +95,8 @@ export function MachineTable({
     return <p className="py-12 text-center text-muted">{emptyText}</p>;
   }
 
+  const showIpv6Column = machines.some(machine => !machine.isWavelength);
+
   return (
     <NoSsr>
       <Table.Root>
@@ -109,7 +111,7 @@ export function MachineTable({
               <Table.Column className="w-[160px]">AWS 帳號</Table.Column>
               <Table.Column className="w-[100px]">狀態</Table.Column>
               <Table.Column className="w-[130px]">公網 IP</Table.Column>
-              <Table.Column className="w-[190px]">IPv6</Table.Column>
+              {showIpv6Column ? <Table.Column className="w-[190px]">IPv6</Table.Column> : null}
               <Table.Column className="w-[250px]">DNS</Table.Column>
               <Table.Column className="w-[220px]">DDNS</Table.Column>
               <Table.Column className="w-[510px]">操作</Table.Column>
@@ -160,9 +162,11 @@ export function MachineTable({
                       <span className="text-muted">—</span>
                     )}
                   </Table.Cell>
-                  <Table.Cell className="overflow-hidden">
-                    <CopyableCell value={machine.ipv6Address} />
-                  </Table.Cell>
+                  {showIpv6Column ? (
+                    <Table.Cell className="overflow-hidden">
+                      <CopyableCell value={machine.isWavelength ? null : machine.ipv6Address} />
+                    </Table.Cell>
+                  ) : null}
                   <Table.Cell className="overflow-hidden">
                     <CopyableCell value={machine.publicDnsName} />
                   </Table.Cell>

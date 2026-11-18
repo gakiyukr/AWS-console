@@ -54,7 +54,9 @@ export async function resolveOciAccount(env, rawAccountId) {
       userOcid: account.userOcid,
       fingerprint: account.fingerprint,
       region: account.region,
-      compartmentOcid: account.compartmentOcid,
+      // compartment 留空時回退 tenancy 根 compartment（OCI 的 root compartment
+      // OCID 與 tenancy OCID 相同），相容只把資源全放根層級的帳號。
+      compartmentOcid: account.compartmentOcid || account.tenancyOcid,
       displayName: account.name,
       id: account.id,
       proxy,

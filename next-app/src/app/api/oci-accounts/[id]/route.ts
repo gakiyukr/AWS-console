@@ -32,13 +32,22 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   for (const [field, type, label] of [
     ["tenancyOcid", "tenancyOcid", "Tenancy OCID"],
     ["userOcid", "userOcid", "User OCID"],
-    ["compartmentOcid", "compartmentOcid", "Compartment OCID"],
     ["region", "region", "Region"],
     ["fingerprint", "fingerprint", "Fingerprint"],
   ] as const) {
     const validation = validateInput(body[field], type, label);
     if (!validation.valid) {
       return errorResponse(400, validation.error);
+    }
+  }
+  // Compartment 留空＝回退 tenancy 根 compartment；未提供時保留原值，有值才驗證格式
+  const compartmentOcid = typeof body.compartmentOcid === "string"
+    ? body.compartmentOcid.trim()
+    : existing.compartmentOcid ?? "";
+  if (compartmentOcid) {
+    const compartmentValidation = validateInput(compartmentOcid, "compartmentOcid", "Compartment OCID");
+    if (!compartmentValidation.valid) {
+      return errorResponse(400, compartmentValidation.error);
     }
   }
   const enabled = body.enabled ?? existing.enabled;
@@ -74,7 +83,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       userOcid: String(body.userOcid).trim(),
       fingerprint: String(body.fingerprint).trim(),
       region: String(body.region).trim(),
-      compartmentOcid: String(body.compartmentOcid).trim(),
+      compartmentOcid,
       ...encrypted,
       enabled,
       isDefault,

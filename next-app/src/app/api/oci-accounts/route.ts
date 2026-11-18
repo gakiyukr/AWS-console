@@ -37,13 +37,20 @@ export async function POST(request: Request): Promise<Response> {
   for (const [field, type, label] of [
     ["tenancyOcid", "tenancyOcid", "Tenancy OCID"],
     ["userOcid", "userOcid", "User OCID"],
-    ["compartmentOcid", "compartmentOcid", "Compartment OCID"],
     ["region", "region", "Region"],
     ["fingerprint", "fingerprint", "Fingerprint"],
   ] as const) {
     const validation = validateInput(body[field], type, label);
     if (!validation.valid) {
       return errorResponse(400, validation.error);
+    }
+  }
+  // Compartment 留空＝回退 tenancy 根 compartment；有值才驗證格式
+  const compartmentOcid = typeof body.compartmentOcid === "string" ? body.compartmentOcid.trim() : "";
+  if (compartmentOcid) {
+    const compartmentValidation = validateInput(compartmentOcid, "compartmentOcid", "Compartment OCID");
+    if (!compartmentValidation.valid) {
+      return errorResponse(400, compartmentValidation.error);
     }
   }
   if (typeof body.privateKeyPem !== "string" || !body.privateKeyPem.trim()) {
@@ -74,7 +81,7 @@ export async function POST(request: Request): Promise<Response> {
       userOcid: String(body.userOcid).trim(),
       fingerprint: String(body.fingerprint).trim(),
       region: String(body.region).trim(),
-      compartmentOcid: String(body.compartmentOcid).trim(),
+      compartmentOcid,
       ...encrypted,
       // UI 顯示「指紋尾碼」供辨識，不回傳完整憑證
       keyHint: String(body.fingerprint).trim().slice(-5),

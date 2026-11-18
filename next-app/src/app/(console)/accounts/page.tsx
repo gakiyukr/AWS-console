@@ -978,15 +978,19 @@ export default function AccountsPage() {
                     </div>
                   </div>
                   <div className="grid gap-2">
-                    <label htmlFor="oci-compartment-ocid" className="text-sm font-medium">Compartment OCID</label>
+                    <label htmlFor="oci-compartment-ocid" className="text-sm font-medium">Compartment OCID（選填）</label>
                     <Input
                       id="oci-compartment-ocid"
                       className="font-mono text-xs"
                       autoComplete="off"
-                      placeholder="ocid1.compartment.oc1..aaaa…"
+                      placeholder="ocid1.compartment.oc1..aaaa…（留空＝根 compartment）"
                       value={ociAccountForm.compartmentOcid}
                       onChange={event => updateOciField("compartmentOcid", event.target.value)}
                     />
+                    <p className="text-xs text-muted">
+                      Compartment 是 OCI 的資源分層容器；~/.oci/config 不含此欄。
+                      留空時使用 tenancy 根 compartment（兩者 OCID 相同）。
+                    </p>
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="oci-private-key" className="text-sm font-medium">
@@ -1057,7 +1061,6 @@ export default function AccountsPage() {
                     || !ociAccountForm.userOcid
                     || !ociAccountForm.fingerprint
                     || !ociAccountForm.region
-                    || !ociAccountForm.compartmentOcid
                     || (!editingOciAccountId && !ociAccountForm.privateKeyPem.trim())
                   }
                   onPress={saveOciAccount}

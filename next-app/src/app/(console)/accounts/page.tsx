@@ -2,7 +2,7 @@
 
 // 帳號管理：維護 D1 中的多雲 API 憑證（AWS 與 Oracle Cloud OCI）
 // 支援新增／編輯／測試／刪除，以及逐帳號的狀態管理。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Globe, KeyRound, Loader2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "@heroui/react/toast";
 import { Chip } from "@/components/chip";
@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { OCI_REGIONS } from "@/lib/oci-regions";
+import { parseOciConfig } from "@/lib/oci-config-parser";
 import { CustomSelect } from "@/components/ui/select";
 
 // ─── AWS 帳號定義 ───────────────────────────────────────────
@@ -132,6 +133,9 @@ export default function AccountsPage() {
   const [ociAccountOpen, setOciAccountOpen] = useState(false);
   const [editingOciAccountId, setEditingOciAccountId] = useState<number | null>(null);
   const [ociAccountForm, setOciAccountForm] = useState(EMPTY_OCI_FORM);
+  // ~/.oci/config 貼上快速填入（摺疊區塊）
+  const [ociPasteOpen, setOciPasteOpen] = useState(false);
+  const [ociPasteText, setOciPasteText] = useState("");
 
   // ─── 代理池（帳號綁定用） ──────────────────────────────────
   const [proxyOptions, setProxyOptions] = useState<Array<{ id: number; name: string; protocol: string; host: string; port: number }>>([]);
@@ -353,9 +357,58 @@ export default function AccountsPage() {
     setOciAccountForm(previous => ({ ...previous, [key]: value }));
   }
 
+  // 解析貼上的 ~/.oci/config 內容，自動填入可對應的表單欄位。
+  // key_file 僅為本機路徑（瀏覽器讀不到檔案），PEM 仍需使用者自行貼上。
+  function applyOciConfigPaste() {
+    const text = ociPasteText.trim();
+    if (!text) {
+      return;
+    }
+    const fields = parseOciConfig(text);
+    const updates: Partial<typeof EMPTY_OCI_FORM> = {};
+    const filledNames: string[] = [];
+    if (fields.tenancy) {
+      updates.tenancyOcid = fields.tenancy;
+      filledNames.push("Tenancy OCID");
+    }
+    if (fields.user) {
+      updates.userOcid = fields.user;
+      filledNames.push("User OCID");
+    }
+    if (fields.fingerprint) {
+      updates.fingerprint = fields.fingerprint;
+      filledNames.push("Fingerprint");
+    }
+    if (fields.region) {
+      updates.region = fields.region;
+      filledNames.push("Region");
+    }
+    if (filledNames.length === 0) {
+      toastDanger("無法從貼上內容解析出欄位，請確認是 OCI CLI 設定檔（~/.oci/config）的內容");
+      return;
+    }
+    setOciAccountForm(previous => ({ ...previous, ...updates }));
+    const keyFileHint = fields.keyFile
+      ? "；key_file 僅為本機路徑，請開啟該檔案將 PEM 內容貼到私鑰欄"
+      : "；PEM 私鑰仍需自行貼上";
+    toast.success(`已填入：${filledNames.join("、")}${keyFileHint}`);
+    setOciPasteText("");
+    setOciPasteOpen(false);
+  }
+
+  // 貼上的 region 若不在官方清單（如政府雲 us-gov-*），動態補一個 option 使其可顯示
+  const ociRegionOptions = useMemo(() => {
+    if (!ociAccountForm.region || OCI_REGIONS.some(option => option.value === ociAccountForm.region)) {
+      return OCI_REGIONS;
+    }
+    return [{ value: ociAccountForm.region, label: ociAccountForm.region }, ...OCI_REGIONS];
+  }, [ociAccountForm.region]);
+
   function openNewOciAccount() {
     setEditingOciAccountId(null);
     setOciAccountForm({ ...EMPTY_OCI_FORM, isDefault: ociAccounts.length === 0 });
+    setOciPasteOpen(false);
+    setOciPasteText("");
     setOciAccountOpen(true);
     void loadProxies();
   }
@@ -374,6 +427,8 @@ export default function AccountsPage() {
       isDefault: account.isDefault,
       proxyId: account.proxyId ?? null,
     });
+    setOciPasteOpen(false);
+    setOciPasteText("");
     setOciAccountOpen(true);
   }
 
@@ -838,6 +893,36 @@ export default function AccountsPage() {
                   於 OCI 主控台「User Settings → API Keys」產生 API Key；PEM 私鑰僅會加密寫入 D1，
                   不會讀回瀏覽器。
                 </p>
+                {/* ~/.oci/config 貼上快速填入 */}
+                <div className="grid gap-2 rounded-lg border border-divider p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="grid gap-0.5">
+                      <span className="text-sm font-medium">從 OCI CLI 設定檔快速填入</span>
+                      <span className="text-xs text-muted">貼上 ~/.oci/config 內容，自動填入 Tenancy、User、Fingerprint 與 Region。</span>
+                    </div>
+                    <Button variant="ghost" size="sm" onPress={() => setOciPasteOpen(open => !open)}>
+                      {ociPasteOpen ? "收起" : "展開"}
+                    </Button>
+                  </div>
+                  {ociPasteOpen && (
+                    <div className="grid gap-2">
+                      <Textarea
+                        aria-label="OCI CLI 設定檔內容"
+                        className="font-mono text-xs"
+                        rows={6}
+                        placeholder={"[DEFAULT]\nuser=ocid1.user.oc1..aaaa…\nfingerprint=aa:bb:cc:…:ff\ntenancy=ocid1.tenancy.oc1..aaaa…\nregion=eu-frankfurt-1\nkey_file=<path to your private keyfile>"}
+                        value={ociPasteText}
+                        onChange={event => setOciPasteText(event.target.value)}
+                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-muted">key_file 僅為本機路徑，瀏覽器無法讀取；PEM 私鑰仍需自行貼上。</p>
+                        <Button size="sm" onPress={applyOciConfigPaste} isDisabled={!ociPasteText.trim()}>
+                          解析並填入
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <div className="grid gap-4 py-2">
                   <div className="grid gap-2">
                     <label htmlFor="oci-account-name" className="text-sm font-medium">名稱</label>
@@ -887,7 +972,7 @@ export default function AccountsPage() {
                         value={ociAccountForm.region}
                         onChange={value => updateOciField("region", value)}
                         placeholder="選擇區域"
-                        options={OCI_REGIONS}
+                        options={ociRegionOptions}
                       />
                       <p className="text-xs text-muted">請選擇 API 金鑰所屬的 home region（與 OCI 主控台右上角顯示一致）。</p>
                     </div>

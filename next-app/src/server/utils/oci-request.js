@@ -17,35 +17,44 @@ export function ociEndpoint(region) {
 // 單一 OCI 請求的逾時上限（毫秒）。Run Command 等建立類呼叫也是即時回應，
 // 長時間等待一律由各模組的輪詢次數上限承擔，而非單一請求無限等待。
 const OCI_FETCH_TIMEOUT_MS = 30_000;
+export const MAX_OCI_PRIVATE_KEY_LENGTH = 16 * 1024;
 
 // ─── PEM 解析 ───────────────────────────────────────────────
+
+/** 擷取一組成對的 OCI PKCS#8／PKCS#1 私鑰邊界，保留標準 PEM 格式。 */
+export function normalizePrivateKeyPem(pem) {
+  const input = String(pem || "").trim();
+  if (input.length > MAX_OCI_PRIVATE_KEY_LENGTH) {
+    throw new Error("PEM 私鑰內容過大");
+  }
+  if (/ENCRYPTED(?: | RSA )PRIVATE KEY/.test(input)) {
+    throw new Error("不支援含密碼保護的 PEM 私鑰，請先以 openssl 移除 passphrase");
+  }
+
+  const match = input.match(/^-----BEGIN (PRIVATE KEY|RSA PRIVATE KEY)-----\s*([\s\S]*?)\s*-----END \1-----\s*(?:OCI_API_KEY\s*)?$/);
+  if (!match) {
+    throw new Error("PEM 私鑰格式無效（需為 BEGIN PRIVATE KEY 或 BEGIN RSA PRIVATE KEY）");
+  }
+  const body = match[2].replace(/\s+/g, "");
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(body) || !body) {
+    throw new Error("PEM 私鑰內容不是有效的 Base64");
+  }
+  return `-----BEGIN ${match[1]}-----\n${body.match(/.{1,64}/g).join("\n")}\n-----END ${match[1]}-----`;
+}
 
 /**
  * PEM 私鑰 → PKCS#8 DER 位元組。
  * OCI 主控台產生的 API Key 為 PKCS#8（BEGIN PRIVATE KEY）；OpenSSL 產生的
- * 舊型 PKCS#1（BEGIN RSA PRIVATE KEY）會在此包裝成 PKCS#8，避免使用者
- * 貼錯格式時只能得到晦澀的 importKey 錯誤。
+ * 舊型 PKCS#1（BEGIN RSA PRIVATE KEY）會在此包裝成 PKCS#8。
  * @returns {Uint8Array}
  */
 export function pemToPkcs8Der(pem) {
-  const normalized = String(pem || "").trim();
-  if (/ENCRYPTED PRIVATE KEY/.test(normalized)) {
-    throw new Error("不支援含密碼保護的 PEM 私鑰，請先以 openssl 移除 passphrase");
-  }
-
-  const isPkcs8 = /-----BEGIN PRIVATE KEY-----/.test(normalized);
-  const isPkcs1 = /-----BEGIN RSA PRIVATE KEY-----/.test(normalized);
-  if (!isPkcs8 && !isPkcs1) {
-    throw new Error("PEM 私鑰格式無效（需為 BEGIN PRIVATE KEY 或 BEGIN RSA PRIVATE KEY）");
-  }
-
+  const normalized = normalizePrivateKeyPem(pem);
+  const isPkcs8 = normalized.startsWith("-----BEGIN PRIVATE KEY-----");
   const body = normalized
-    .replace(/-----BEGIN [A-Z ]+-----/g, "")
-    .replace(/-----END [A-Z ]+-----/g, "")
+    .replace(/^-----BEGIN (?:RSA )?PRIVATE KEY-----/, "")
+    .replace(/-----END (?:RSA )?PRIVATE KEY-----$/, "")
     .replace(/\s+/g, "");
-  if (!body) {
-    throw new Error("PEM 私鑰格式無效");
-  }
   const der = base64ToBytes(body, "PEM 私鑰內容不是有效的 Base64");
 
   return isPkcs8 ? der : wrapPkcs1InPkcs8(der);
@@ -77,7 +86,8 @@ function wrapPkcs1InPkcs8(pkcs1Der) {
 
 /** 匯入 PEM 私鑰為可簽章的 CryptoKey（RSA-SHA256）。 */
 export async function importSigningKey(pem) {
-  const der = pemToPkcs8Der(pem);
+  const normalized = normalizePrivateKeyPem(pem);
+  const der = pemToPkcs8Der(normalized);
   return crypto.subtle.importKey(
     "pkcs8",
     der,

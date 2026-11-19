@@ -3,7 +3,11 @@
 import { encryptOciCredentials } from "@/server/utils/credential-crypto.js";
 import { deleteOciAccount, getOciAccountById, updateOciAccount } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
-import { validateInput } from "@/server/utils/validate.js";
+import {
+  mergeOciCredentialFields,
+  normalizeOciAccountInput,
+  validateOciPrivateKeyPem,
+} from "@/server/utils/oci-account-normalize.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 
@@ -25,33 +29,21 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     return errorResponse(404, "OCI 帳號不存在");
   }
   const body = /** @type {Record<string, unknown>} */ (await readJsonBody(request)) ?? {};
-  const name = typeof body.name === "string" ? body.name.trim() : existing.name;
-  if (!name || name.length > 80) {
-    return errorResponse(400, "帳號名稱必須為 1 至 80 個字元");
+  const normalized = normalizeOciAccountInput(body, { existing });
+  if (!normalized.valid) {
+    return errorResponse(400, normalized.error ?? "OCI 帳號資料無效");
   }
-  for (const [field, type, label] of [
-    ["tenancyOcid", "tenancyOcid", "Tenancy OCID"],
-    ["userOcid", "userOcid", "User OCID"],
-    ["region", "region", "Region"],
-    ["fingerprint", "fingerprint", "Fingerprint"],
-  ] as const) {
-    const validation = validateInput(body[field], type, label);
-    if (!validation.valid) {
-      return errorResponse(400, validation.error);
-    }
-  }
-  // Compartment 留空＝回退 tenancy 根 compartment；未提供時保留原值，有值才驗證格式
-  const compartmentOcid = typeof body.compartmentOcid === "string"
-    ? body.compartmentOcid.trim()
-    : existing.compartmentOcid ?? "";
-  if (compartmentOcid) {
-    const compartmentValidation = validateInput(compartmentOcid, "compartmentOcid", "Compartment OCID");
-    if (!compartmentValidation.valid) {
-      return errorResponse(400, compartmentValidation.error);
-    }
+  const privateKey = body.privateKeyPem === undefined || body.privateKeyPem === null
+    ? { valid: true as const, value: "" }
+    : await validateOciPrivateKeyPem(body.privateKeyPem, { required: false });
+  if (!privateKey.valid) {
+    return errorResponse(400, privateKey.error ?? "PEM 私鑰格式無效");
   }
   const enabled = body.enabled ?? existing.enabled;
   const isDefault = body.isDefault ?? existing.isDefault;
+  if (typeof enabled !== "boolean" || typeof isDefault !== "boolean") {
+    return errorResponse(400, "啟用與預設狀態必須是布林值");
+  }
   if (isDefault && !enabled) {
     return errorResponse(400, "預設 OCI 帳號必須保持啟用");
   }
@@ -69,22 +61,26 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   }
 
   try {
-    const encrypted = typeof body.privateKeyPem === "string" && body.privateKeyPem.trim()
-      ? await encryptOciCredentials({ privateKeyPem: body.privateKeyPem }, env.CREDENTIAL_ENCRYPTION_KEY)
-      : {
-          keyCiphertext: existing.keyCiphertext,
-          keyIv: existing.keyIv,
-          keyHint: existing.keyHint,
-          encryptionKeyVersion: existing.encryptionKeyVersion,
-        };
+    let encrypted = {
+      keyCiphertext: existing.keyCiphertext,
+      keyIv: existing.keyIv,
+      encryptionKeyVersion: existing.encryptionKeyVersion,
+    };
+    if (privateKey.value) {
+      if (!env.CREDENTIAL_ENCRYPTION_KEY) {
+        return errorResponse(503, "伺服器尚未設定憑證加密主金鑰");
+      }
+      encrypted = await encryptOciCredentials({ privateKeyPem: privateKey.value }, env.CREDENTIAL_ENCRYPTION_KEY);
+    }
+    const { name, tenancyOcid, userOcid, fingerprint, region, compartmentOcid } = normalized.values;
     const account = await updateOciAccount(env.DB, id, {
       name,
-      tenancyOcid: String(body.tenancyOcid).trim(),
-      userOcid: String(body.userOcid).trim(),
-      fingerprint: String(body.fingerprint).trim(),
-      region: String(body.region).trim(),
+      tenancyOcid,
+      userOcid,
+      fingerprint,
+      region,
       compartmentOcid,
-      ...encrypted,
+      ...mergeOciCredentialFields({ fingerprint, existing, encrypted }),
       enabled,
       isDefault,
       proxyId,

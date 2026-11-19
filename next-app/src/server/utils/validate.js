@@ -27,8 +27,8 @@ const INPUT_VALIDATORS = {
   compartmentOcid: /^ocid1\.compartment\.oc1\.\.[a-zA-Z0-9-]+$/i,
   instanceOcid: /^ocid1\.instance\.oc1(?:\.[a-z0-9-]+)?(?:\.[a-zA-Z0-9-]+|\.\.[a-zA-Z0-9-]+)$/i,
   vcnOcid: /^ocid1\.vcn\.oc1(?:\.[a-z0-9-]+)?(?:\.[a-zA-Z0-9-]+|\.\.[a-zA-Z0-9-]+)$/i,
-  // API key 指紋：OCI 主控台顯示為 aa:bb:cc:… 共 10 組兩位十六進位
-  fingerprint: /^[0-9a-f]{2}(:[0-9a-f]{2}){9}$/,
+  // OCI API key 指紋是 MD5 十六進位摘要，顯示為 16 組兩位十六進位。
+  fingerprint: /^(?:[0-9a-f]{2}:){15}[0-9a-f]{2}$/i,
   // shape 名稱如 VM.Standard.A1.Flex、VM.Standard.E2.1.Micro
   shape: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
 };

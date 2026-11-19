@@ -70,9 +70,13 @@ SelectScrollDownButton.displayName =
 
 const SelectContent = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = "popper", ...props }, ref) => (
-  <SelectPrimitive.Portal>
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content> & {
+    portalContainer?: React.ComponentPropsWithoutRef<
+      typeof SelectPrimitive.Portal
+    >["container"];
+  }
+>(({ className, children, position = "popper", portalContainer, ...props }, ref) => (
+  <SelectPrimitive.Portal container={portalContainer}>
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
@@ -167,8 +171,7 @@ export interface CustomSelectProps {
 const EMPTY_VALUE_KEY = "__shadcn_select_empty__";
 
 /**
- * Shadcn-style ready-to-use dropdown select with smooth animations,
- * checkmarks, popover portals, and keyboard navigation.
+ * 提供動畫、選取標記、浮層與鍵盤導覽的下拉選單。
  */
 export function CustomSelect({
   id,
@@ -179,9 +182,16 @@ export function CustomSelect({
   options,
   onChange,
 }: CustomSelectProps) {
+  const [portalContainer, setPortalContainer] = React.useState<HTMLElement | null>(null);
+  const triggerRef = React.useCallback((trigger: HTMLButtonElement | null) => {
+    // 掛載時將浮層留在所屬對話框內，避免 React Aria 將其視為外部內容而隱藏或設為 inert。
+    setPortalContainer(
+      trigger?.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? null
+    );
+  }, []);
   const strValue = value === null || value === undefined ? "" : String(value);
   const hasEmptyOption = options.some(opt => String(opt.value) === "");
-  const normalizedValue = strValue === "" ? (hasEmptyOption ? EMPTY_VALUE_KEY : undefined) : strValue;
+  const normalizedValue = strValue === "" && hasEmptyOption ? EMPTY_VALUE_KEY : strValue;
 
   const handleValueChange = (val: string) => {
     if (onChange) {
@@ -195,10 +205,10 @@ export function CustomSelect({
       onValueChange={handleValueChange}
       disabled={disabled}
     >
-      <SelectTrigger id={id} className={className}>
+      <SelectTrigger ref={triggerRef} id={id} className={className}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent portalContainer={portalContainer}>
         {options.map((opt) => {
           const rawVal = String(opt.value);
           const itemVal = rawVal === "" ? EMPTY_VALUE_KEY : rawVal;

@@ -859,30 +859,35 @@ export async function createOciAccount(db, account) {
   if (existing.some(item => item.name === account.name))
     return null;
   const isDefault = account.isDefault || existing.length === 0;
-  if (isDefault)
-    await db.prepare("UPDATE oci_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1").run();
   const proxyId = account.proxyId ? Number(account.proxyId) : null;
+  const insert = db.prepare(`INSERT INTO oci_accounts
+    (name, tenancy_ocid, user_ocid, fingerprint, region, compartment_ocid,
+     key_ciphertext, key_iv, key_hint, encryption_key_version, enabled, is_default, proxy_id)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`)
+    .bind(
+      account.name,
+      account.tenancyOcid,
+      account.userOcid,
+      account.fingerprint,
+      account.region,
+      account.compartmentOcid,
+      account.keyCiphertext,
+      account.keyIv,
+      account.keyHint,
+      account.encryptionKeyVersion,
+      account.enabled === false ? 0 : 1,
+      isDefault ? 1 : 0,
+      proxyId,
+    );
+  const statements = isDefault
+    ? [
+        db.prepare("UPDATE oci_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1"),
+        insert,
+      ]
+    : [insert];
   try {
-    const result = await db.prepare(`INSERT INTO oci_accounts
-      (name, tenancy_ocid, user_ocid, fingerprint, region, compartment_ocid,
-       key_ciphertext, key_iv, key_hint, encryption_key_version, enabled, is_default, proxy_id)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`)
-      .bind(
-        account.name,
-        account.tenancyOcid,
-        account.userOcid,
-        account.fingerprint,
-        account.region,
-        account.compartmentOcid,
-        account.keyCiphertext,
-        account.keyIv,
-        account.keyHint,
-        account.encryptionKeyVersion,
-        account.enabled === false ? 0 : 1,
-        isDefault ? 1 : 0,
-        proxyId,
-      )
-      .run();
+    const results = await db.batch(statements);
+    const result = results[results.length - 1];
     return getOciAccountById(db, result.meta.last_row_id);
   } catch (error) {
     if (String(error?.message || error).includes("UNIQUE"))
@@ -894,15 +899,28 @@ export async function createOciAccount(db, account) {
 export async function updateOciAccount(db, id, account) {
   const existing = await listOciAccounts(db);
   const current = existing.find(item => item.id === id);
+  if (!current)
+    return null;
   if (existing.some(item => item.id !== id && item.name === account.name))
     return null;
-  if (account.isDefault)
-    await db.prepare("UPDATE oci_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1").run();
   const proxyId = account.proxyId !== undefined ? (account.proxyId ? Number(account.proxyId) : null) : (current?.proxyId ?? null);
-  const result = await db.prepare(`UPDATE oci_accounts SET
+  const verificationFieldsChanged = [
+    ["tenancyOcid", account.tenancyOcid],
+    ["userOcid", account.userOcid],
+    ["fingerprint", account.fingerprint],
+    ["region", account.region],
+    ["compartmentOcid", account.compartmentOcid],
+    ["keyCiphertext", account.keyCiphertext],
+    ["keyIv", account.keyIv],
+    ["encryptionKeyVersion", account.encryptionKeyVersion],
+    ["proxyId", proxyId],
+  ].some(([field, value]) => current?.[field] !== value);
+  const update = db.prepare(`UPDATE oci_accounts SET
     name = ?2, tenancy_ocid = ?3, user_ocid = ?4, fingerprint = ?5, region = ?6,
     compartment_ocid = ?7, key_ciphertext = ?8, key_iv = ?9, key_hint = ?10,
-    encryption_key_version = ?11, enabled = ?12, is_default = ?13, proxy_id = ?14, updated_at = datetime('now')
+    encryption_key_version = ?11, enabled = ?12, is_default = ?13, proxy_id = ?14,
+    last_verified_at = ${verificationFieldsChanged ? "NULL" : "last_verified_at"},
+    updated_at = datetime('now')
     WHERE id = ?1`)
     .bind(
       id,
@@ -919,8 +937,15 @@ export async function updateOciAccount(db, id, account) {
       account.enabled ? 1 : 0,
       account.isDefault ? 1 : 0,
       proxyId,
-    )
-    .run();
+    );
+  const statements = account.isDefault
+    ? [
+        db.prepare("UPDATE oci_accounts SET is_default = 0, updated_at = datetime('now') WHERE is_default = 1"),
+        update,
+      ]
+    : [update];
+  const results = await db.batch(statements);
+  const result = results[results.length - 1];
   return (result.meta.changes ?? 0) > 0 ? getOciAccountById(db, id) : null;
 }
 

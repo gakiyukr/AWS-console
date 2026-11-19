@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { OCI_REGIONS } from "@/lib/oci-regions";
 import { parseOciConfig } from "@/lib/oci-config-parser";
+import { validateInput } from "@/server/utils/validate.js";
 import { CustomSelect } from "@/components/ui/select";
 
 // ─── AWS 帳號定義 ───────────────────────────────────────────
@@ -364,39 +365,37 @@ export default function AccountsPage() {
     if (!text) {
       return;
     }
-    const fields = parseOciConfig(text);
-    const updates: Partial<typeof EMPTY_OCI_FORM> = {};
-    const filledNames: string[] = [];
-    if (fields.tenancy) {
-      updates.tenancyOcid = fields.tenancy;
-      filledNames.push("Tenancy OCID");
+    try {
+      const fields = parseOciConfig(text);
+      for (const [field, type, label] of [
+        ["tenancy", "tenancyOcid", "Tenancy OCID"],
+        ["user", "userOcid", "User OCID"],
+        ["fingerprint", "fingerprint", "Fingerprint"],
+        ["region", "region", "Region"],
+      ] as const) {
+        if (!fields[field]) throw new Error(`設定檔缺少 ${label}，請貼上同一個 profile 的完整設定。`);
+        const validation = validateInput(fields[field], type, label);
+        if (!validation.valid) throw new Error(validation.error);
+      }
+      setOciAccountForm(previous => ({
+        ...previous,
+        tenancyOcid: fields.tenancy!,
+        userOcid: fields.user!,
+        fingerprint: fields.fingerprint!,
+        region: fields.region!,
+        // 切換認證時清除原帳號的資源範圍與私鑰，避免與新 profile 混用。
+        compartmentOcid: "",
+        privateKeyPem: "",
+      }));
+      toast.success("已填入 Tenancy、User、Fingerprint 與 Region，請貼上對應的 PEM 私鑰。");
+      setOciPasteText("");
+      setOciPasteOpen(false);
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "無法解析 OCI CLI 設定檔。");
     }
-    if (fields.user) {
-      updates.userOcid = fields.user;
-      filledNames.push("User OCID");
-    }
-    if (fields.fingerprint) {
-      updates.fingerprint = fields.fingerprint;
-      filledNames.push("Fingerprint");
-    }
-    if (fields.region) {
-      updates.region = fields.region;
-      filledNames.push("Region");
-    }
-    if (filledNames.length === 0) {
-      toastDanger("無法從貼上內容解析出欄位，請確認是 OCI CLI 設定檔（~/.oci/config）的內容");
-      return;
-    }
-    setOciAccountForm(previous => ({ ...previous, ...updates }));
-    const keyFileHint = fields.keyFile
-      ? "；key_file 僅為本機路徑，請開啟該檔案將 PEM 內容貼到私鑰欄"
-      : "；PEM 私鑰仍需自行貼上";
-    toast.success(`已填入：${filledNames.join("、")}${keyFileHint}`);
-    setOciPasteText("");
-    setOciPasteOpen(false);
   }
 
-  // 貼上的 region 若不在官方清單（如政府雲 us-gov-*），動態補一個 option 使其可顯示
+  // 保留設定檔或既有帳號的區域值，避免靜態清單更新前無法顯示。
   const ociRegionOptions = useMemo(() => {
     if (!ociAccountForm.region || OCI_REGIONS.some(option => option.value === ociAccountForm.region)) {
       return OCI_REGIONS;
@@ -435,13 +434,22 @@ export default function AccountsPage() {
   async function saveOciAccount() {
     setSavingOci(true);
     try {
+      for (const [value, type, label] of [
+        [ociAccountForm.tenancyOcid.trim(), "tenancyOcid", "Tenancy OCID"],
+        [ociAccountForm.userOcid.trim(), "userOcid", "User OCID"],
+        [ociAccountForm.fingerprint.trim().toLowerCase(), "fingerprint", "Fingerprint"],
+        [ociAccountForm.region.trim(), "region", "Region"],
+      ] as const) {
+        const validation = validateInput(value, type, label);
+        if (!validation.valid) throw new Error(validation.error);
+      }
       const body: Record<string, unknown> = {
-        name: ociAccountForm.name,
-        tenancyOcid: ociAccountForm.tenancyOcid,
-        userOcid: ociAccountForm.userOcid,
-        fingerprint: ociAccountForm.fingerprint,
-        region: ociAccountForm.region,
-        compartmentOcid: ociAccountForm.compartmentOcid,
+        name: ociAccountForm.name.trim(),
+        tenancyOcid: ociAccountForm.tenancyOcid.trim(),
+        userOcid: ociAccountForm.userOcid.trim(),
+        fingerprint: ociAccountForm.fingerprint.trim().toLowerCase(),
+        region: ociAccountForm.region.trim(),
+        compartmentOcid: ociAccountForm.compartmentOcid.trim(),
         enabled: ociAccountForm.enabled,
         isDefault: ociAccountForm.isDefault,
         proxyId: ociAccountForm.proxyId,
@@ -669,7 +677,7 @@ export default function AccountsPage() {
                       </div>
                     </div>
                     <p className="text-xs text-muted truncate">
-                      Compartment: {account.compartmentOcid}
+                      Compartment: {account.compartmentOcid || "根 Compartment（Tenancy）"}
                     </p>
                     <p className="text-xs text-muted">
                       最近驗證：{account.lastVerifiedAt
@@ -888,7 +896,7 @@ export default function AccountsPage() {
               <Modal.Header>
                 <Modal.Heading>{editingOciAccountId ? "編輯 OCI 帳號" : "新增 OCI 帳號"}</Modal.Heading>
               </Modal.Header>
-              <Modal.Body>
+              <Modal.Body className="min-w-0 overflow-x-hidden">
                 <p className="text-sm text-muted">
                   於 OCI 主控台「User Settings → API Keys」產生 API Key；PEM 私鑰僅會加密寫入 D1，
                   不會讀回瀏覽器。
@@ -954,8 +962,8 @@ export default function AccountsPage() {
                       onChange={event => updateOciField("userOcid", event.target.value)}
                     />
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="grid gap-2">
+                  <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+                    <div className="grid min-w-0 gap-2">
                       <label htmlFor="oci-fingerprint" className="text-sm font-medium">Fingerprint</label>
                       <Input
                         id="oci-fingerprint"
@@ -966,15 +974,16 @@ export default function AccountsPage() {
                         onChange={event => updateOciField("fingerprint", event.target.value)}
                       />
                     </div>
-                    <div className="grid gap-2">
-                      <label htmlFor="oci-region" className="text-sm font-medium">Region（home region）</label>
+                    <div className="grid min-w-0 gap-2">
+                      <label htmlFor="oci-region" className="text-sm font-medium">Region（操作區域）</label>
                       <CustomSelect
+                        id="oci-region"
                         value={ociAccountForm.region}
                         onChange={value => updateOciField("region", value)}
                         placeholder="選擇區域"
                         options={ociRegionOptions}
                       />
-                      <p className="text-xs text-muted">請選擇 API 金鑰所屬的 home region（與 OCI 主控台右上角顯示一致）。</p>
+                      <p className="text-xs text-muted">選擇此帳號要管理資源的已訂閱區域；貼上設定檔時會自動帶入 region。</p>
                     </div>
                   </div>
                   <div className="grid gap-2">
@@ -1032,6 +1041,7 @@ export default function AccountsPage() {
                     <div className="grid gap-2">
                       <Label htmlFor="oci-account-proxy" className="text-sm font-medium">出口代理（選填）</Label>
                       <CustomSelect
+                        id="oci-account-proxy"
                         value={ociAccountForm.proxyId ? String(ociAccountForm.proxyId) : ""}
                         onChange={value => updateOciField("proxyId", value ? Number(value) : null as unknown as string)}
                         options={[

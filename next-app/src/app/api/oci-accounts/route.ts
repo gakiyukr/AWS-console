@@ -3,7 +3,7 @@
 import { encryptOciCredentials } from "@/server/utils/credential-crypto.js";
 import { createOciAccount, listOciAccounts } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
-import { validateInput } from "@/server/utils/validate.js";
+import { normalizeOciAccountInput, validateOciPrivateKeyPem } from "@/server/utils/oci-account-normalize.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 
@@ -30,34 +30,13 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse(503, "伺服器尚未設定憑證加密主金鑰");
   }
   const body = /** @type {Record<string, unknown>} */ (await readJsonBody(request)) ?? {};
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  if (!name || name.length > 80) {
-    return errorResponse(400, "帳號名稱必須為 1 至 80 個字元");
+  const normalized = normalizeOciAccountInput(body);
+  if (!normalized.valid) {
+    return errorResponse(400, normalized.error ?? "OCI 帳號資料無效");
   }
-  for (const [field, type, label] of [
-    ["tenancyOcid", "tenancyOcid", "Tenancy OCID"],
-    ["userOcid", "userOcid", "User OCID"],
-    ["region", "region", "Region"],
-    ["fingerprint", "fingerprint", "Fingerprint"],
-  ] as const) {
-    const validation = validateInput(body[field], type, label);
-    if (!validation.valid) {
-      return errorResponse(400, validation.error);
-    }
-  }
-  // Compartment 留空＝回退 tenancy 根 compartment；有值才驗證格式
-  const compartmentOcid = typeof body.compartmentOcid === "string" ? body.compartmentOcid.trim() : "";
-  if (compartmentOcid) {
-    const compartmentValidation = validateInput(compartmentOcid, "compartmentOcid", "Compartment OCID");
-    if (!compartmentValidation.valid) {
-      return errorResponse(400, compartmentValidation.error);
-    }
-  }
-  if (typeof body.privateKeyPem !== "string" || !body.privateKeyPem.trim()) {
-    return errorResponse(400, "PEM 私鑰為必填");
-  }
-  if (body.privateKeyPem.length > 16 * 1024) {
-    return errorResponse(400, "PEM 私鑰內容過大");
+  const privateKey = await validateOciPrivateKeyPem(body.privateKeyPem);
+  if (!privateKey.valid) {
+    return errorResponse(400, privateKey.error ?? "PEM 私鑰格式無效");
   }
   if (body.enabled === false && body.isDefault === true) {
     return errorResponse(400, "預設 OCI 帳號必須保持啟用");
@@ -72,19 +51,18 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const encrypted = await encryptOciCredentials({
-      privateKeyPem: body.privateKeyPem,
-    }, env.CREDENTIAL_ENCRYPTION_KEY);
+    const { name, tenancyOcid, userOcid, fingerprint, region, compartmentOcid } = normalized.values;
+    const encrypted = await encryptOciCredentials({ privateKeyPem: privateKey.value }, env.CREDENTIAL_ENCRYPTION_KEY);
     const account = await createOciAccount(env.DB, {
       name,
-      tenancyOcid: String(body.tenancyOcid).trim(),
-      userOcid: String(body.userOcid).trim(),
-      fingerprint: String(body.fingerprint).trim(),
-      region: String(body.region).trim(),
+      tenancyOcid,
+      userOcid,
+      fingerprint,
+      region,
       compartmentOcid,
       ...encrypted,
-      // UI 顯示「指紋尾碼」供辨識，不回傳完整憑證
-      keyHint: String(body.fingerprint).trim().slice(-5),
+      // UI 顯示指紋尾碼；須從正規化後的完整指紋計算。
+      keyHint: fingerprint.slice(-5),
       enabled: body.enabled !== false,
       isDefault: body.isDefault === true,
       proxyId,
@@ -92,10 +70,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!account) {
       return errorResponse(409, "OCI 帳號名稱已存在");
     }
-    const safe = { ...account };
-    delete safe.keyCiphertext;
-    delete safe.keyIv;
-    return jsonResponse({ account: safe }, { status: 201 });
+    return jsonResponse({ account: publicAccount(account) }, { status: 201 });
   } catch (error) {
     return errorResponse(400, error instanceof Error ? error.message : "OCI 帳號建立失敗");
   }

@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { ociRegionLabel } from "@/lib/oci-regions";
 
 interface OciAccountOption {
   id: number
@@ -86,6 +87,9 @@ export default function NewInstancePage() {
   const [enableIpv6, setEnableIpv6] = useState(false);
   const [sshPublicKey, setSshPublicKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // 多區域：訂閱區域清單與目前選定的目標區域
+  const [subscribedRegions, setSubscribedRegions] = useState<string[]>([]);
+  const [region, setRegion] = useState("");
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -100,12 +104,14 @@ export default function NewInstancePage() {
     }
   }, []);
 
-  const loadOptions = useCallback(async (targetAccountId: string) => {
+  const loadOptions = useCallback(async (targetAccountId: string, targetRegion: string = "") => {
     setOptionsLoading(true);
     setImages([]);
     try {
-      const query = targetAccountId ? `?account_id=${targetAccountId}` : "";
-      const response = await fetch(`/api/instances/create-options${query}`);
+      const params = new URLSearchParams();
+      if (targetAccountId) params.set("account_id", targetAccountId);
+      if (targetRegion) params.set("region", targetRegion);
+      const response = await fetch(`/api/instances/create-options?${params.toString()}`);
       if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<CreateOptions>(response);
       setOptions(payload);
@@ -142,12 +148,13 @@ export default function NewInstancePage() {
     }
   }, []);
 
-  const loadImages = useCallback(async (targetAccountId: string, targetShape: string) => {
+  const loadImages = useCallback(async (targetAccountId: string, targetShape: string, targetRegion: string = "") => {
     if (!targetShape) return;
     setImagesLoading(true);
     try {
       const params = new URLSearchParams({ shape: targetShape });
       if (targetAccountId) params.set("account_id", targetAccountId);
+      if (targetRegion) params.set("region", targetRegion);
       const response = await fetch(`/api/instances/create-options/images?${params.toString()}`);
       if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<{ images: OciImage[] }>(response);
@@ -159,15 +166,45 @@ export default function NewInstancePage() {
     }
   }, []);
 
+  // 訂閱區域清單（單次呼叫；快取空時後端自動回填，失敗時回退帳號預設區域）
+  const loadSubscribedRegions = useCallback(async (targetAccountId: string, fallbackRegion = "") => {
+    try {
+      const response = await fetch(`/api/oci-accounts/${targetAccountId}/regions`);
+      if (response.ok) {
+        const payload = await readJson<{ regions?: Array<{ region: string, isHomeRegion: boolean, status?: string }> }>(response);
+        const raw = payload.regions || [];
+        const ready = raw.filter(item => item.status === "READY");
+        const list = ready.length > 0 ? ready : raw;
+        if (list.length > 0) {
+          setSubscribedRegions(list.map(item => item.region));
+          return list;
+        }
+      }
+    } catch {
+      // 回退帳號預設區域
+    }
+    if (fallbackRegion) {
+      const fallback = [{ region: fallbackRegion, isHomeRegion: true }];
+      setSubscribedRegions([fallbackRegion]);
+      return fallback;
+    }
+    setSubscribedRegions([]);
+    return [];
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     async function init() {
       const loaded = await loadAccounts();
       if (cancelled) return;
-      const defaultId = loaded[0]?.id;
-      if (typeof defaultId === "number") {
-        setAccountId(String(defaultId));
-        await loadOptions(String(defaultId));
+      const firstAccount = loaded[0];
+      if (typeof firstAccount?.id === "number") {
+        setAccountId(String(firstAccount.id));
+        const regions = await loadSubscribedRegions(String(firstAccount.id), firstAccount.region || "");
+        if (cancelled) return;
+        const homeRegion = regions.find(item => item.isHomeRegion)?.region || regions[0]?.region || firstAccount.region || "";
+        setRegion(homeRegion);
+        await loadOptions(String(firstAccount.id), homeRegion);
       } else {
         setOptionsLoading(false);
       }
@@ -179,12 +216,12 @@ export default function NewInstancePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // shape 變更 → 重載映像並重設選擇
+  // 帳號、shape 或區域變更 → 重載映像並重設選擇
   useEffect(() => {
     if (!shape || !accountId) return;
     let cancelled = false;
     async function reload() {
-      await loadImages(accountId, shape);
+      await loadImages(accountId, shape, region);
       if (cancelled) return;
       setImageOs("");
       setImageVersion("");
@@ -195,7 +232,7 @@ export default function NewInstancePage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shape]);
+  }, [accountId, shape, region]);
 
   // 映像 OS 分組（不對 OS 名稱寫死）
   const osList = useMemo(() => {
@@ -253,6 +290,7 @@ export default function NewInstancePage() {
   const sshKeyValid = /^\s*ssh-(ed25519|rsa|dss|ecdsa)\b/.test(sshPublicKey) || /^\s*ecdsa-sha2-\b/.test(sshPublicKey);
   const canSubmit = Boolean(
     accountId
+    && region
     && displayName
     && ad
     && shape
@@ -274,6 +312,7 @@ export default function NewInstancePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accountId,
+          region,
           displayName,
           availabilityDomain: ad,
           shape,
@@ -307,7 +346,7 @@ export default function NewInstancePage() {
         <div>
           <h2 className="text-2xl font-bold tracking-tight">建立執行個體</h2>
           <p className="text-sm text-muted">
-            {options ? `${options.region} · compartment 即時選項` : "載入 compartment 選項中"}
+            {options ? `${ociRegionLabel(options.region)} · compartment 即時選項` : "載入 compartment 選項中"}
           </p>
         </div>
       </div>
@@ -339,9 +378,34 @@ export default function NewInstancePage() {
                     }))}
                     onChange={async val => {
                       setAccountId(val);
-                      await loadOptions(val);
+                      const fallbackRegion = accounts.find(item => String(item.id) === val)?.region || "";
+                      const regions = await loadSubscribedRegions(val, fallbackRegion);
+                      const homeRegion = regions.find(item => item.isHomeRegion)?.region || regions[0]?.region || fallbackRegion;
+                      setRegion(homeRegion);
+                      await loadOptions(val, homeRegion);
                     }}
                   />
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="new-region" className="text-sm font-medium">目標區域</label>
+                  <CustomSelect
+                    id="new-region"
+                    value={region}
+                    placeholder="請選擇區域"
+                    disabled={submitting || optionsLoading || subscribedRegions.length === 0}
+                    options={subscribedRegions.map(item => ({
+                      value: item,
+                      label: ociRegionLabel(item),
+                    }))}
+                    onChange={async val => {
+                      setRegion(val);
+                      // 區域切換：AD／shape／VCN／子網全部依新區域重載
+                      await loadOptions(accountId, val);
+                    }}
+                  />
+                  <p className="text-xs text-muted">
+                    來自帳號的已訂閱區域；Always Free 額度僅適用主（home）region。
+                  </p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="new-name" className="text-sm font-medium">名稱</Label>

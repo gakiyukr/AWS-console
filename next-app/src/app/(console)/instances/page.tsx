@@ -35,6 +35,7 @@ import { isTransitionState, lifecycleLabel, truncateOcid } from "@/lib/ocid";
 import { CustomSelect } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { ociRegionLabel } from "@/lib/oci-regions";
 
 interface OciAccountOption {
   id: number
@@ -50,6 +51,7 @@ interface InstanceRow {
   notes?: string | null
   lifecycleState: string
   shape: string
+  region: string
   availabilityDomain: string
   timeCreated: string | null
   publicIp: string | null
@@ -91,6 +93,10 @@ export default function InstancesPage() {
   const [instances, setInstances] = useState<InstanceRow[]>([]);
   const [nextPage, setNextPage] = useState<string | null>(null);
   const [region, setRegion] = useState<string>("");
+  // 多區域：訂閱區域快取（帳號選定後載入）與篩選值（空字串＝全部區域）
+  const [subscribedRegions, setSubscribedRegions] = useState<string[]>([]);
+  const [regionFilter, setRegionFilter] = useState<string>("");
+  const regionFilterRef = useRef<string>("");
   const [loading, setLoading] = useState(true);
   // 電源操作後輪詢中的執行個體 OCID 集合
   const [pollingIds, setPollingIds] = useState<Set<string>>(new Set());
@@ -102,7 +108,7 @@ export default function InstancesPage() {
   const [operation, setOperation] = useState<PendingOperation | null>(null);
   const [operationRunning, setOperationRunning] = useState(false);
   const pollTimersRef = useRef<Map<string, number>>(new Map());
-  const pollInstanceStatusRef = useRef<(instanceId: string, targetStates: string[], attempt?: number) => void>(() => {});
+  const pollInstanceStatusRef = useRef<(instanceId: string, targetStates: string[], attempt?: number, instanceRegion?: string) => void>(() => {});
 
   // 終止主機對話框狀態
   const [terminatingInstance, setTerminatingInstance] = useState<InstanceRow | null>(null);
@@ -137,30 +143,54 @@ export default function InstancesPage() {
     }
   }, []);
 
-  const loadInstances = useCallback(async (targetAccountId: string, page: string | null = null) => {
+  const loadInstances = useCallback(async (targetAccountId: string, page: string | null = null, filterRegion: string | null = null) => {
     setLoading(true);
     try {
       const query = new URLSearchParams();
       if (targetAccountId) query.set("account_id", targetAccountId);
       if (page) query.set("page", page);
+      const activeFilter = filterRegion ?? regionFilterRef.current;
+      if (activeFilter) query.set("region", activeFilter);
       const response = await fetch(`/api/instances?${query.toString()}`);
       if (!response.ok) throw new Error(await readError(response));
-      const payload = await readJson<{ instances: InstanceRow[], nextPage: string | null, region: string }>(response);
+      const payload = await readJson<{ instances: InstanceRow[], nextPage: string | null, region: string, warnings?: string[] }>(response);
       setInstances(payload.instances);
       setNextPage(payload.nextPage);
       setRegion(payload.region || "");
+      for (const warning of payload.warnings || []) {
+        toastDanger(warning);
+      }
       // 過渡態（佈建中／啟動中／關機中）自動輪詢至目標態
       for (const row of payload.instances) {
         if (!pollingIdsRef.current.has(row.id) && isTransitionState(row.lifecycleState)) {
           const targets = row.lifecycleState === "STOPPING" ? ["STOPPED"] : ["RUNNING"];
           setPollingIds(previous => new Set(previous).add(row.id));
-          pollInstanceStatusRef.current(row.id, targets);
+          pollInstanceStatusRef.current(row.id, targets, 0, row.region);
         }
       }
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入執行個體失敗");
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // 載入帳號的訂閱區域快取（快取空時由後端自動回填一次）
+  const loadSubscribedRegions = useCallback(async (targetAccountId: string) => {
+    if (!targetAccountId) {
+      setSubscribedRegions([]);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/oci-accounts/${targetAccountId}/regions`);
+      if (!response.ok) return;
+      const payload = await readJson<{ regions?: Array<{ region: string, status?: string }> }>(response);
+      const raw = payload.regions || [];
+      const ready = raw.filter(item => item.status === "READY");
+      const list = ready.length > 0 ? ready : raw;
+      setSubscribedRegions(list.map(item => item.region));
+    } catch {
+      // 區域清單失敗不影響列表（僅少了篩選選項）
     }
   }, []);
 
@@ -171,8 +201,11 @@ export default function InstancesPage() {
       if (cancelled) return;
       const defaultId = loaded.find(account => account.id)?.id;
       if (typeof defaultId === "number") {
-        setAccountId(String(defaultId));
-        await loadInstances(String(defaultId));
+        const idStr = String(defaultId);
+        setAccountId(idStr);
+        await loadSubscribedRegions(idStr);
+        if (cancelled) return;
+        await loadInstances(idStr, null, "");
       } else {
         setLoading(false);
       }
@@ -188,7 +221,7 @@ export default function InstancesPage() {
   }, []);
 
   // 電源操作送出後：輪詢單台狀態直到目標態（3s × 40）
-  function pollInstanceStatus(instanceId: string, targetStates: string[], attempt = 0) {
+  function pollInstanceStatus(instanceId: string, targetStates: string[], attempt = 0, instanceRegion = "") {
     if (attempt >= POWER_POLL_MAX_ATTEMPTS) {
       pollingIdsRef.current.delete(instanceId);
       setPollingIds(previous => {
@@ -202,8 +235,11 @@ export default function InstancesPage() {
     pollingIdsRef.current.add(instanceId);
     const timer = window.setTimeout(async () => {
       try {
-        const query = accountId ? `?account_id=${accountId}` : "";
-        const response = await fetch(`/api/instances/${encodeURIComponent(instanceId)}${query}`);
+        const params = new URLSearchParams();
+        if (accountId) params.set("account_id", accountId);
+        if (instanceRegion) params.set("region", instanceRegion);
+        const qs = params.toString();
+        const response = await fetch(`/api/instances/${encodeURIComponent(instanceId)}${qs ? `?${qs}` : ""}`);
         if (response.ok) {
           const payload = await readJson<{ instance: { lifecycleState: string } }>(response);
           setInstances(previous => previous.map(row => row.id === instanceId
@@ -220,9 +256,9 @@ export default function InstancesPage() {
             return;
           }
         }
-        pollInstanceStatus(instanceId, targetStates, attempt + 1);
+        pollInstanceStatus(instanceId, targetStates, attempt + 1, instanceRegion);
       } catch {
-        pollInstanceStatus(instanceId, targetStates, attempt + 1);
+        pollInstanceStatus(instanceId, targetStates, attempt + 1, instanceRegion);
       }
     }, POWER_POLL_INTERVAL_MS);
     pollTimersRef.current.set(instanceId, timer);
@@ -238,7 +274,7 @@ export default function InstancesPage() {
       const response = await fetch(`/api/instances/${encodeURIComponent(instance.id)}/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: resolvedAction, accountId }),
+        body: JSON.stringify({ action: resolvedAction, accountId, region: instance.region || undefined }),
       });
       if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<{ targetStates: string[] }>(response);
@@ -246,7 +282,7 @@ export default function InstancesPage() {
       setPendingPower(null);
       setStopForce(false);
       setPollingIds(previous => new Set(previous).add(instance.id));
-      pollInstanceStatus(instance.id, payload.targetStates);
+      pollInstanceStatus(instance.id, payload.targetStates, 0, instance.region);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "電源操作失敗");
     } finally {
@@ -259,7 +295,10 @@ export default function InstancesPage() {
     if (!operation || operationRunning) return;
     setOperationRunning(true);
     try {
-      const payload: Record<string, unknown> = { accountId };
+      const payload: Record<string, unknown> = {
+        accountId,
+        region: operation.instance.region || undefined,
+      };
       if (operation.kind === "firewall") {
         payload.cleanHost = cleanHost;
       }
@@ -300,15 +339,16 @@ export default function InstancesPage() {
       const response = await fetch(`/api/instances/${encodeURIComponent(terminatingInstance.id)}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountId, preserveBootVolume }),
+        body: JSON.stringify({ accountId, preserveBootVolume, region: terminatingInstance.region || undefined }),
       });
       if (!response.ok) throw new Error(await readError(response));
       const payload = await readJson<{ targetStates: string[], message: string }>(response);
       toast.success(payload.message || "終止指令已送出");
       const targetId = terminatingInstance.id;
+      const targetRegion = terminatingInstance.region;
       setTerminatingInstance(null);
       setPollingIds(previous => new Set(previous).add(targetId));
-      pollInstanceStatus(targetId, payload.targetStates);
+      pollInstanceStatus(targetId, payload.targetStates, 0, targetRegion);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "終止執行個體失敗");
     } finally {
@@ -379,7 +419,9 @@ export default function InstancesPage() {
           <h2 className="text-2xl font-bold tracking-tight">執行個體</h2>
           <p className="text-sm text-muted">
             {selectedAccount
-              ? ` compartment 即時清單 · ${selectedAccount.region}${region && region !== selectedAccount.region ? `（回報 region：${region}）` : ""}`
+              ? (!regionFilter && subscribedRegions.length > 1
+                  ? `compartment 即時清單 · 全部已訂閱區域（共 ${subscribedRegions.length} 區）`
+                  : `compartment 即時清單 · ${ociRegionLabel(regionFilter || region || selectedAccount.region)}`)
               : "即時列出 compartment 內的執行個體"}
           </p>
         </div>
@@ -398,12 +440,36 @@ export default function InstancesPage() {
                 value: String(account.id),
                 label: account.name,
               }))}
-              onChange={val => {
+              onChange={async val => {
+                pollTimersRef.current.forEach(timer => window.clearTimeout(timer));
+                pollTimersRef.current.clear();
+                pollingIdsRef.current.clear();
+                setPollingIds(new Set());
                 setAccountId(val);
-                void loadInstances(val);
+                setRegionFilter("");
+                regionFilterRef.current = "";
+                await loadSubscribedRegions(val);
+                await loadInstances(val, null, "");
               }}
             />
           </div>
+          {subscribedRegions.length > 1 ? (
+            <div className="w-44">
+              <CustomSelect
+                value={regionFilter}
+                placeholder="全部區域"
+                options={[
+                  { value: "", label: "全部區域" },
+                  ...subscribedRegions.map(item => ({ value: item, label: ociRegionLabel(item) })),
+                ]}
+                onChange={val => {
+                  setRegionFilter(val);
+                  regionFilterRef.current = val;
+                  void loadInstances(accountId, null, val);
+                }}
+              />
+            </div>
+          ) : null}
           <Button size="sm" isDisabled={loading} onPress={() => loadInstances(accountId)}>
             {loading ? <Loader2 aria-hidden size={16} className="animate-spin" /> : <RefreshCw aria-hidden size={16} />}
             重新整理
@@ -499,7 +565,12 @@ export default function InstancesPage() {
                                   </button>
                                 </Table.Cell>
                                 <Table.Cell><span className="text-xs">{row.shape || "—"}</span></Table.Cell>
-                                <Table.Cell><span className="text-xs">{row.availabilityDomain || "—"}</span></Table.Cell>
+                                <Table.Cell>
+                                  <div className="grid gap-0.5">
+                                    <span className="text-xs">{row.availabilityDomain || "—"}</span>
+                                    {row.region ? <span className="text-[11px] text-muted">{ociRegionLabel(row.region)}</span> : null}
+                                  </div>
+                                </Table.Cell>
                                 <Table.Cell>
                                   <Chip variant={running ? "primary" : row.lifecycleState === "STOPPED" ? "soft" : "secondary"}>
                                     {busy ? <Loader2 aria-hidden size={10} className="mr-1 animate-spin" /> : null}

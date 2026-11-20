@@ -10,11 +10,25 @@ class OciAccountConfigurationError extends Error {
   }
 }
 
+// region 覆蓋值格式：OCI region identifier（如 eu-frankfurt-1）。
+// 合法性僅驗形狀；是否為該帳號已訂閱區域由呼叫端（快取清單）把關。
+const OCI_REGION_SHAPE = /^[a-z][a-z0-9-]*\d$/i;
+
 /**
  * 解析指定或預設帳號，並解密 PEM 私鑰供單次 OCI 呼叫使用。
- * 回傳的 ociAccount 為簽章所需的唯讀欄位組合。
+ * options.region 可覆蓋帳號預設操作區域（endpoint 與下層函式全由 ociAccount.region
+ * 推導，簽章 keyId 不含 region），用於單帳號多區域的列表與建機。
+ * @param {unknown} env
+ * @param {string | number | null | undefined} rawAccountId
+ * @param {{ region?: string | null }} [options]
+ * @returns {Promise<{
+ *   account: Record<string, unknown>,
+ *   ociAccount: { id: number, tenancyOcid: string, userOcid: string, fingerprint: string,
+ *     region: string, compartmentOcid: string, displayName: string, proxy: unknown },
+ *   privateKeyPem: string,
+ * }>}
  */
-export async function resolveOciAccount(env, rawAccountId) {
+export async function resolveOciAccount(env, rawAccountId, options = {}) {
   if (!env?.DB)
     throw new OciAccountConfigurationError("D1 資料庫尚未設定", 503);
   if (!env.CREDENTIAL_ENCRYPTION_KEY) {
@@ -36,6 +50,13 @@ export async function resolveOciAccount(env, rawAccountId) {
     throw new OciAccountConfigurationError("尚未設定可用的 OCI 帳號", 409);
   if (!account.enabled)
     throw new OciAccountConfigurationError("指定的 OCI 帳號已停用", 409);
+  // region 覆蓋值在組裝 ociAccount 前驗證；空白視為未提供。
+  if (options.region !== undefined && options.region !== null && options.region !== "") {
+    const requested = String(options.region).trim();
+    if (!OCI_REGION_SHAPE.test(requested)) {
+      throw new OciAccountConfigurationError("region 參數格式無效", 400);
+    }
+  }
 
   const credentials = await decryptOciCredentials(account, env.CREDENTIAL_ENCRYPTION_KEY);
   let proxy = null;
@@ -53,12 +74,15 @@ export async function resolveOciAccount(env, rawAccountId) {
       tenancyOcid: account.tenancyOcid,
       userOcid: account.userOcid,
       fingerprint: account.fingerprint,
-      region: account.region,
       // compartment 留空時回退 tenancy 根 compartment（OCI 的 root compartment
       // OCID 與 tenancy OCID 相同），相容只把資源全放根層級的帳號。
       compartmentOcid: account.compartmentOcid || account.tenancyOcid,
       displayName: account.name,
       id: account.id,
+      // region 覆蓋：多區域列表／建機帶明確 region；未帶時用帳號預設。
+      region: options.region
+        ? String(options.region).trim()
+        : account.region,
       proxy,
     },
     privateKeyPem: credentials.privateKeyPem,

@@ -12,7 +12,10 @@ export async function GET(request: Request): Promise<Response> {
   const denied = await requireApiSession(request);
   if (denied) return denied;
   const env = await getEnv();
-  const accountId = new URL(request.url).searchParams.get("account_id") ?? "";
+  const query = new URL(request.url).searchParams;
+  const accountId = query.get("account_id") ?? "";
+  // 多區域：region 覆蓋帳號預設操作區域，AD／shape／VCN 隨之切換
+  const region = query.get("region") || "";
   if (accountId) {
     const validation = validateInput(accountId, undefined, "account_id");
     if (!validation.valid || !/^\d+$/.test(accountId)) {
@@ -21,7 +24,7 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
-    const { ociAccount, privateKeyPem } = await resolveOciAccount(env, accountId || undefined);
+    const { ociAccount, privateKeyPem } = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
     const options = await listCreateOptions({ account: ociAccount, privateKeyPem });
     return jsonResponse({ ...options, compartmentOcid: ociAccount.compartmentOcid, region: ociAccount.region });
   } catch (error) {

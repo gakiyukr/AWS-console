@@ -1,7 +1,7 @@
 'use client'
 
-// 保留公網 IP 管理（Phase 2）：清單、申請、綁定、解綁與釋放。
-import { useCallback, useEffect, useState } from "react";
+// 保留公網 IP 管理（Phase 2）：清單、申請、綁定、解綁與釋放（支援單帳號多區域）。
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Copy,
   Globe,
@@ -22,12 +22,19 @@ import { NoSsr } from "@/components/no-ssr";
 import { Table } from "@/components/table-lazy";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { truncateOcid } from "@/lib/ocid";
+import { ociRegionLabel } from "@/lib/oci-regions";
 import { CustomSelect } from "@/components/ui/select";
 
 interface OciAccountOption {
   id: number
   name: string
   region: string
+}
+
+interface SubscribedRegionOption {
+  region: string
+  isHomeRegion: boolean
+  status: string
 }
 
 interface ReservedIpRow {
@@ -39,11 +46,15 @@ interface ReservedIpRow {
   assignedEntityType: string | null
   privateIpId: string | null
   timeCreated: string | null
+  region?: string
 }
 
 export default function ReservedIpsPage() {
   const [accounts, setAccounts] = useState<OciAccountOption[]>([]);
   const [accountId, setAccountId] = useState<string>("");
+  const [subscribedRegions, setSubscribedRegions] = useState<SubscribedRegionOption[]>([]);
+  const [regionFilter, setRegionFilter] = useState<string>("");
+  const regionFilterRef = useRef<string>("");
   const [ips, setIps] = useState<ReservedIpRow[]>([]);
   const [region, setRegion] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -51,6 +62,7 @@ export default function ReservedIpsPage() {
   // 申請對話框狀態
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
+  const [createRegion, setCreateRegion] = useState("");
   const [creating, setCreating] = useState(false);
 
   // 綁定對話框狀態
@@ -75,15 +87,45 @@ export default function ReservedIpsPage() {
     }
   }, []);
 
-  const loadReservedIps = useCallback(async (targetAccountId: string) => {
+  const loadSubscribedRegions = useCallback(async (targetAccountId: string) => {
+    if (!targetAccountId) {
+      setSubscribedRegions([]);
+      return [];
+    }
+    try {
+      const response = await fetch(`/api/oci-accounts/${targetAccountId}/regions`);
+      if (!response.ok) {
+        setSubscribedRegions([]);
+        return [];
+      }
+      const payload = await readJson<{ regions?: SubscribedRegionOption[] }>(response);
+      const raw = payload.regions || [];
+      const ready = raw.filter(item => item.status === "READY");
+      const list = ready.length > 0 ? ready : raw;
+      setSubscribedRegions(list);
+      return list;
+    } catch {
+      setSubscribedRegions([]);
+      return [];
+    }
+  }, []);
+
+  const loadReservedIps = useCallback(async (targetAccountId: string, filterRegion: string | null = null) => {
     setLoading(true);
     try {
-      const query = targetAccountId ? `?account_id=${targetAccountId}` : "";
-      const response = await fetch(`/api/reserved-ips${query}`);
+      const query = new URLSearchParams();
+      if (targetAccountId) query.set("account_id", targetAccountId);
+      const activeFilter = filterRegion ?? regionFilterRef.current;
+      if (activeFilter) query.set("region", activeFilter);
+      const qs = query.toString();
+      const response = await fetch(`/api/reserved-ips${qs ? `?${qs}` : ""}`);
       if (!response.ok) throw new Error(await readError(response));
-      const payload = await readJson<{ reservedIps: ReservedIpRow[], region: string }>(response);
+      const payload = await readJson<{ reservedIps: ReservedIpRow[], region: string, warnings?: string[] }>(response);
       setIps(payload.reservedIps);
       setRegion(payload.region || "");
+      for (const warning of payload.warnings || []) {
+        toastDanger(warning);
+      }
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "載入保留 IP 失敗");
     } finally {
@@ -92,22 +134,43 @@ export default function ReservedIpsPage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     async function init() {
       const loaded = await loadAccounts();
+      if (cancelled) return;
       const defaultId = loaded.find(account => account.id)?.id;
       if (typeof defaultId === "number") {
-        setAccountId(String(defaultId));
-        await loadReservedIps(String(defaultId));
+        const idStr = String(defaultId);
+        setAccountId(idStr);
+        setRegionFilter("");
+        regionFilterRef.current = "";
+        await loadSubscribedRegions(idStr);
+        if (cancelled) return;
+        await loadReservedIps(idStr, "");
       } else {
         setLoading(false);
       }
     }
     void init();
-  }, [loadAccounts, loadReservedIps]);
+    return () => {
+      cancelled = true;
+    };
+  }, [loadAccounts, loadSubscribedRegions, loadReservedIps]);
 
-  function handleAccountChange(newId: string) {
+  async function handleAccountChange(newId: string) {
     setAccountId(newId);
-    void loadReservedIps(newId);
+    setRegionFilter("");
+    regionFilterRef.current = "";
+    await loadSubscribedRegions(newId);
+    await loadReservedIps(newId, "");
+  }
+
+  function openCreateDialog() {
+    const selected = accounts.find(account => String(account.id) === accountId);
+    const homeRegion = subscribedRegions.find(item => item.isHomeRegion)?.region || subscribedRegions[0]?.region;
+    setCreateName("");
+    setCreateRegion(regionFilter || homeRegion || selected?.region || "");
+    setCreateOpen(true);
   }
 
   // 建立保留 IP
@@ -119,6 +182,7 @@ export default function ReservedIpsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accountId,
+          region: createRegion || undefined,
           displayName: createName.trim() || undefined,
         }),
       });
@@ -126,7 +190,7 @@ export default function ReservedIpsPage() {
       toast.success("保留公網 IP 申請成功");
       setCreateOpen(false);
       setCreateName("");
-      await loadReservedIps(accountId);
+      await loadReservedIps(accountId, regionFilter);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "申請保留 IP 失敗");
     } finally {
@@ -148,6 +212,7 @@ export default function ReservedIpsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accountId,
+          region: attachTarget.region || undefined,
           privateIpId: targetPrivateIpId.trim(),
         }),
       });
@@ -155,7 +220,7 @@ export default function ReservedIpsPage() {
       toast.success("保留 IP 綁定成功");
       setAttachTarget(null);
       setTargetPrivateIpId("");
-      await loadReservedIps(accountId);
+      await loadReservedIps(accountId, regionFilter);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "綁定失敗");
     } finally {
@@ -171,12 +236,13 @@ export default function ReservedIpsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accountId,
+          region: row.region || undefined,
           privateIpId: "",
         }),
       });
       if (!response.ok) throw new Error(await readError(response));
       toast.success("已成功解綁保留 IP");
-      await loadReservedIps(accountId);
+      await loadReservedIps(accountId, regionFilter);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "解綁失敗");
     }
@@ -187,13 +253,15 @@ export default function ReservedIpsPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const response = await fetch(`/api/reserved-ips/${encodeURIComponent(deleteTarget.id)}?account_id=${accountId}`, {
+      const query = new URLSearchParams({ account_id: accountId });
+      if (deleteTarget.region) query.set("region", deleteTarget.region);
+      const response = await fetch(`/api/reserved-ips/${encodeURIComponent(deleteTarget.id)}?${query.toString()}`, {
         method: "DELETE",
       });
       if (!response.ok) throw new Error(await readError(response));
       toast.success("保留公網 IP 已成功釋放");
       setDeleteTarget(null);
-      await loadReservedIps(accountId);
+      await loadReservedIps(accountId, regionFilter);
     } catch (error) {
       toastDanger(error instanceof Error ? error.message : "釋放失敗");
     } finally {
@@ -219,12 +287,14 @@ export default function ReservedIpsPage() {
           <h2 className="text-2xl font-bold tracking-tight">保留公網 IP</h2>
           <p className="text-sm text-muted">
             {selectedAccount
-              ? `獨立於執行個體的靜態 IP 池 · ${selectedAccount.region}${region ? ` (${region})` : ""}`
+              ? (!regionFilter && subscribedRegions.length > 1
+                  ? `獨立於執行個體的靜態 IP 池 · 全部已訂閱區域（共 ${subscribedRegions.length} 區）`
+                  : `獨立於執行個體的靜態 IP 池 · ${ociRegionLabel(regionFilter || region || selectedAccount.region)}`)
               : "管理 OCI 帳號的 Reserved Public IPs"}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" onPress={() => setCreateOpen(true)}>
+          <Button size="sm" variant="secondary" isDisabled={!accountId} onPress={openCreateDialog}>
             <Plus aria-hidden size={16} />
             申請保留 IP
           </Button>
@@ -234,7 +304,7 @@ export default function ReservedIpsPage() {
             isIconOnly
             aria-label="重新整理"
             isDisabled={loading}
-            onPress={() => loadReservedIps(accountId)}
+            onPress={() => loadReservedIps(accountId, regionFilter)}
           >
             <RefreshCw aria-hidden size={16} className={loading ? "animate-spin" : ""} />
           </Button>
@@ -242,19 +312,45 @@ export default function ReservedIpsPage() {
       </div>
 
       {accounts.length > 0 ? (
-        <div className="flex items-center gap-2">
-          <label htmlFor="reserved-ip-account-select" className="text-xs font-medium text-muted shrink-0">OCI 帳號：</label>
-          <div className="w-56">
-            <CustomSelect
-              id="reserved-ip-account-select"
-              value={accountId}
-              options={accounts.map(account => ({
-                value: String(account.id),
-                label: `${account.name} (${account.region})`,
-              }))}
-              onChange={handleAccountChange}
-            />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="reserved-ip-account-select" className="text-xs font-medium text-muted shrink-0">OCI 帳號：</label>
+            <div className="w-56">
+              <CustomSelect
+                id="reserved-ip-account-select"
+                value={accountId}
+                options={accounts.map(account => ({
+                  value: String(account.id),
+                  label: `${account.name} (${account.region})`,
+                }))}
+                onChange={val => void handleAccountChange(val)}
+              />
+            </div>
           </div>
+          {subscribedRegions.length > 1 ? (
+            <div className="flex items-center gap-2">
+              <label htmlFor="reserved-ip-region-select" className="text-xs font-medium text-muted shrink-0">區域篩選：</label>
+              <div className="w-52">
+                <CustomSelect
+                  id="reserved-ip-region-select"
+                  value={regionFilter}
+                  placeholder="全部區域"
+                  options={[
+                    { value: "", label: "全部區域" },
+                    ...subscribedRegions.map(item => ({
+                      value: item.region,
+                      label: ociRegionLabel(item.region),
+                    })),
+                  ]}
+                  onChange={val => {
+                    setRegionFilter(val);
+                    regionFilterRef.current = val;
+                    void loadReservedIps(accountId, val);
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -273,6 +369,7 @@ export default function ReservedIpsPage() {
                   <Table.Header>
                     <Table.Column isRowHeader>IP 位址</Table.Column>
                     <Table.Column>名稱</Table.Column>
+                    <Table.Column>區域</Table.Column>
                     <Table.Column>狀態</Table.Column>
                     <Table.Column>指派目標 (Private IP)</Table.Column>
                     <Table.Column>建立時間</Table.Column>
@@ -281,14 +378,14 @@ export default function ReservedIpsPage() {
                   <Table.Body>
                     {loading ? (
                       <Table.Row>
-                        <Table.Cell colSpan={6} className="py-8 text-center text-sm text-muted">
+                        <Table.Cell colSpan={7} className="py-8 text-center text-sm text-muted">
                           <Loader2 aria-hidden size={20} className="mx-auto animate-spin" />
                           <p className="mt-2">正在載入保留 IP 清單…</p>
                         </Table.Cell>
                       </Table.Row>
                     ) : ips.length === 0 ? (
                       <Table.Row>
-                        <Table.Cell colSpan={6} className="py-8 text-center text-sm text-muted">
+                        <Table.Cell colSpan={7} className="py-8 text-center text-sm text-muted">
                           此 Compartment 內尚未配置保留公網 IP。
                         </Table.Cell>
                       </Table.Row>
@@ -313,6 +410,9 @@ export default function ReservedIpsPage() {
                             </Table.Cell>
                             <Table.Cell className="text-xs">
                               {row.displayName || <span className="text-muted">（未命名）</span>}
+                            </Table.Cell>
+                            <Table.Cell className="text-xs text-muted">
+                              {row.region ? ociRegionLabel(row.region) : "—"}
                             </Table.Cell>
                             <Table.Cell>
                               <Chip size="sm" variant={isAssigned ? "primary" : "secondary"}>
@@ -389,6 +489,23 @@ export default function ReservedIpsPage() {
           <p className="text-muted text-xs">
             將在當前 Compartment 內分配一個獨立於任何執行個體的靜態 Public IP，可長期保留並隨時綁定至主機。
           </p>
+          {subscribedRegions.length > 1 ? (
+            <div>
+              <label htmlFor="create-reserved-ip-region" className="text-xs font-medium">目標區域</label>
+              <div className="mt-1">
+                <CustomSelect
+                  id="create-reserved-ip-region"
+                  value={createRegion}
+                  placeholder="請選擇區域"
+                  options={subscribedRegions.map(item => ({
+                    value: item.region,
+                    label: ociRegionLabel(item.region),
+                  }))}
+                  onChange={setCreateRegion}
+                />
+              </div>
+            </div>
+          ) : null}
           <div>
             <label htmlFor="create-reserved-ip-name" className="text-xs font-medium">顯示名稱（選填）</label>
             <Input

@@ -23,6 +23,7 @@ import { Card } from "@heroui/react/card";
 import { Chip } from "@/components/chip";
 import { readJson } from "@/lib/api-client";
 import { copyToClipboard, stateBadgeVariant, stateLabel } from "@/lib/machine-display";
+import { ociRegionLabel } from "@/lib/oci-regions";
 
 interface Machine {
   id: number
@@ -45,6 +46,7 @@ interface OciInstance {
   notes?: string | null
   lifecycleState: string
   shape?: string
+  region?: string
   publicIp?: string | null
   ipv6Address?: string | null
 }
@@ -229,7 +231,7 @@ export default function DashboardPage() {
       cloudColor: "text-red-500",
       id: i.id,
       name: i.displayName || i.alias || i.id,
-      region: i.shape || "OCI 運算",
+      region: i.region ? ociRegionLabel(i.region) : (i.shape || "OCI 運算"),
       ip: i.publicIp || "—",
       isWl: false,
       state: i.lifecycleState,

@@ -6,6 +6,7 @@
 import { errorResponse, readJsonBody, sseResponse, toHttpError } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
 import { resolveOciAccount } from "@/server/utils/oci-account.js";
+import { resolveInstanceContext } from "@/server/utils/oci-regions.js";
 import { getInstance } from "@/server/utils/oci-compute.js";
 import { cleanHostIptables } from "@/server/utils/oci-agent.js";
 import { ociFailureMessage } from "@/server/utils/oci-error.js";
@@ -35,18 +36,21 @@ export async function POST(
   const accountId = typeof body.accountId === "string" || typeof body.accountId === "number"
     ? String(body.accountId)
     : "";
+  const region = typeof body.region === "string" ? body.region.trim() : "";
 
   let ctx;
   let displayName = "";
   try {
-    const resolved = await resolveOciAccount(env, accountId || undefined);
-    const instance = await getInstance(resolved, id);
+    const resolved = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
+    // 多區域：優先使用指定 region，否則從 OCID 反推實際 region
+    const instanceCtx = await resolveInstanceContext(env, resolved, id, region);
+    const instance = await getInstance(instanceCtx, id);
     displayName = String(instance?.displayName || "");
     const lifecycleState = String(instance?.lifecycleState || "").toUpperCase();
     if (lifecycleState !== "RUNNING") {
       return errorResponse(409, `執行個體目前狀態為 ${lifecycleState}，必須在 RUNNING（開機）狀態下方能執行 Cloud Agent 指令。`);
     }
-    ctx = resolved;
+    ctx = { ...resolved, ociAccount: instanceCtx.account };
   } catch (error) {
     const httpError = toHttpError(error);
     return errorResponse(httpError.status, httpError.status === 500 ? ociFailureMessage(error) : httpError.body.error);
@@ -74,11 +78,11 @@ export async function POST(
       try {
         await appendOperationLog(env.DB, {
           action: "clean-host-firewall",
-          ociAccountId: ctx.account.id,
+          ociAccountId: Number(ctx.account.id),
           instanceId: id,
           displayName,
           status: "success",
-          detail: { command_id: result.commandId, output: result.output },
+          detail: { command_id: result.commandId, output: result.output, region: ctx.ociAccount.region },
         });
       } catch {
         // 操作已成功時，稽核日誌失敗不影響結果事件
@@ -89,7 +93,7 @@ export async function POST(
       try {
         await appendOperationLog(env.DB, {
           action: "clean-host-firewall",
-          ociAccountId: ctx.account.id,
+          ociAccountId: Number(ctx.account.id),
           instanceId: id,
           displayName,
           status: "failure",

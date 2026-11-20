@@ -4,6 +4,7 @@
 // 支援新增／編輯／測試／刪除，以及逐帳號的狀態管理。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Globe, KeyRound, Loader2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ociRegionLabel } from "@/lib/oci-regions";
 import { toast } from "@heroui/react/toast";
 import { Chip } from "@/components/chip";
 import { Button } from "@heroui/react/button";
@@ -137,6 +138,13 @@ export default function AccountsPage() {
   // ~/.oci/config 貼上快速填入（摺疊區塊）
   const [ociPasteOpen, setOciPasteOpen] = useState(false);
   const [ociPasteText, setOciPasteText] = useState("");
+  // OCI 帳號已訂閱區域（唯讀快取＋手動刷新）
+  const [ociRegionsOpen, setOciRegionsOpen] = useState(false);
+  const [ociRegionsAccountId, setOciRegionsAccountId] = useState<number | null>(null);
+  const [ociRegionsAccountName, setOciRegionsAccountName] = useState("");
+  const [ociRegionsLoading, setOciRegionsLoading] = useState(false);
+  const [ociRegionsRefreshing, setOciRegionsRefreshing] = useState(false);
+  const [ociRegions, setOciRegions] = useState<Array<{ region: string, regionKey: string, isHomeRegion: boolean, status: string }>>([]);
 
   // ─── 代理池（帳號綁定用） ──────────────────────────────────
   const [proxyOptions, setProxyOptions] = useState<Array<{ id: number; name: string; protocol: string; host: string; port: number }>>([]);
@@ -395,6 +403,51 @@ export default function AccountsPage() {
     }
   }
 
+  // ─── OCI 已訂閱區域 ───────────────────────────────────────
+  // 開 modal 只讀快取（backfill=0，不打 OCI API）；刷新走 POST 即時查詢。
+  function openOciRegions(account: OciAccount) {
+    setOciRegionsAccountId(account.id);
+    setOciRegionsAccountName(account.name);
+    setOciRegions([]);
+    setOciRegionsOpen(true);
+    void loadOciRegions(account.id);
+  }
+
+  async function loadOciRegions(accountId: number) {
+    setOciRegionsLoading(true);
+    try {
+      const response = await fetch(`/api/oci-accounts/${accountId}/regions?backfill=0`);
+      if (!response.ok) {
+        throw new Error(await readError(response));
+      }
+      const payload = await readJson<{ regions?: Array<{ region: string, regionKey: string, isHomeRegion: boolean, status: string }> }>(response);
+      setOciRegions(payload.regions || []);
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "載入訂閱區域失敗");
+    } finally {
+      setOciRegionsLoading(false);
+    }
+  }
+
+  async function refreshOciRegions(accountId: number) {
+    setOciRegionsRefreshing(true);
+    try {
+      const response = await fetch(`/api/oci-accounts/${accountId}/regions`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(await readError(response));
+      }
+      const payload = await readJson<{ message?: string, regions?: Array<{ region: string, regionKey: string, isHomeRegion: boolean, status: string }> }>(response);
+      if (payload.regions) {
+        setOciRegions(payload.regions);
+      }
+      toast.success(payload?.message || "訂閱區域已更新");
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "查詢訂閱區域失敗");
+    } finally {
+      setOciRegionsRefreshing(false);
+    }
+  }
+
   // 保留設定檔或既有帳號的區域值，避免靜態清單更新前無法顯示。
   const ociRegionOptions = useMemo(() => {
     if (!ociAccountForm.region || OCI_REGIONS.some(option => option.value === ociAccountForm.region)) {
@@ -465,7 +518,11 @@ export default function AccountsPage() {
       if (!response.ok) {
         throw new Error(await readError(response));
       }
+      const payload = await readJson<{ regionCacheWarning?: string | null }>(response);
       toast.success(editingOciAccountId ? "OCI 帳號已更新" : "OCI 帳號已建立");
+      if (payload?.regionCacheWarning) {
+        toast.warning(payload.regionCacheWarning);
+      }
       setOciAccountOpen(false);
       await loadOciData();
     } catch (error) {
@@ -694,6 +751,9 @@ export default function AccountsPage() {
                         {testingOciId === account.id
                           ? <Loader2 aria-hidden size={16} className="animate-spin" />
                           : <CheckCircle2 aria-hidden size={16} />}
+                      </Button>
+                      <Button variant="ghost" aria-label="已訂閱區域" onPress={() => openOciRegions(account)}>
+                        <Globe aria-hidden size={16} />
                       </Button>
                       <Button variant="ghost" aria-label="編輯帳號" onPress={() => openEditOciAccount(account)}>
                         <Pencil aria-hidden size={16} />
@@ -1077,6 +1137,59 @@ export default function AccountsPage() {
                 >
                   {savingOci ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
                   儲存
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
+
+      {/* ─── OCI 已訂閱區域對話框 ───────────────────────────── */}
+      <Modal.Root isOpen={ociRegionsOpen} onOpenChange={setOciRegionsOpen}>
+        <Modal.Backdrop>
+          <Modal.Container size="sm">
+            <Modal.Dialog>
+              <Modal.Header>
+                <Modal.Heading>已訂閱區域{ociRegionsAccountName ? ` · ${ociRegionsAccountName}` : ""}</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                <p className="text-sm text-muted">
+                  來自 OCI「ListRegionSubscriptions」；主為帳號 home region。
+                  訂閱新區域請在 OCI 主控台「Region Management」操作後重新整理。
+                </p>
+                <div className="grid gap-2 py-2">
+                  {ociRegionsLoading ? (
+                    <div className="flex py-6 text-sm text-muted">
+                      <Loader2 aria-hidden size={16} className="mr-2 animate-spin" />載入中...
+                    </div>
+                  ) : ociRegions.length === 0 ? (
+                    <div className="border-y py-8 text-center text-sm text-muted">
+                      尚未載入區域快取，按下方「重新整理」即時查詢。
+                    </div>
+                  ) : (
+                    ociRegions.map(item => (
+                      <div key={item.region} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm">{ociRegionLabel(item.region)}</p>
+                          {item.regionKey ? <p className="text-xs text-muted">OCID 段：{item.regionKey}</p> : null}
+                        </div>
+                        <div className="flex shrink-0 gap-1">
+                          {item.isHomeRegion ? <Chip variant="default">主</Chip> : null}
+                          <Chip variant={item.status === "READY" ? "secondary" : "soft"}>{item.status}</Chip>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="secondary" onPress={() => setOciRegionsOpen(false)}>關閉</Button>
+                <Button
+                  isDisabled={ociRegionsLoading || ociRegionsRefreshing || ociRegionsAccountId === null}
+                  onPress={() => ociRegionsAccountId !== null && void refreshOciRegions(ociRegionsAccountId)}
+                >
+                  {ociRegionsRefreshing ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : <RefreshCw aria-hidden size={16} className="mr-2" />}
+                  重新整理
                 </Button>
               </Modal.Footer>
             </Modal.Dialog>

@@ -1,9 +1,11 @@
 // /api/oci-accounts：GET 回傳 OCI 帳號清單（密文與私鑰欄位不出伺服器）；
 // POST 建立新帳號（PEM 私鑰加密寫入 D1）。
 import { encryptOciCredentials } from "@/server/utils/credential-crypto.js";
-import { createOciAccount, listOciAccounts } from "@/server/utils/db.js";
+import { createOciAccount, listOciAccounts, replaceCachedOciRegions } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
 import { normalizeOciAccountInput, validateOciPrivateKeyPem } from "@/server/utils/oci-account-normalize.js";
+import { resolveOciAccount } from "@/server/utils/oci-account.js";
+import { listRegionSubscriptions } from "@/server/utils/oci-regions.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 
@@ -70,7 +72,21 @@ export async function POST(request: Request): Promise<Response> {
     if (!account) {
       return errorResponse(409, "OCI 帳號名稱已存在");
     }
-    return jsonResponse({ account: publicAccount(account) }, { status: 201 });
+
+    // 訂閱區域快取：帳號啟用時 best-effort 抓取 ListRegionSubscriptions，
+    // 失敗不阻擋建立，開機／清單頁讀取時會自動回填。
+    let regionCacheWarning: string | null = null;
+    if (account.enabled) {
+      try {
+        const { ociAccount, privateKeyPem } = await resolveOciAccount(env, account.id);
+        const subscriptions = await listRegionSubscriptions({ account: ociAccount, privateKeyPem });
+        await replaceCachedOciRegions(env.DB, account.id, subscriptions);
+      } catch (error) {
+        regionCacheWarning = `帳號已建立，但訂閱區域快取尚未建立（${error instanceof Error ? error.message : "未知錯誤"}）；開啟執行個體或區域清單時會自動重試。`;
+      }
+    }
+
+    return jsonResponse({ account: publicAccount(account), regionCacheWarning }, { status: 201 });
   } catch (error) {
     return errorResponse(400, error instanceof Error ? error.message : "OCI 帳號建立失敗");
   }

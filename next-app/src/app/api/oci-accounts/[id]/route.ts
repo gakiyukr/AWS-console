@@ -1,7 +1,7 @@
 // /api/oci-accounts/[id]：PUT 更新 OCI 帳號（PEM 留空表示不替換）；
 // DELETE 刪除帳號。
 import { encryptOciCredentials } from "@/server/utils/credential-crypto.js";
-import { deleteOciAccount, getOciAccountById, updateOciAccount } from "@/server/utils/db.js";
+import { deleteOciAccount, getOciAccountById, replaceCachedOciRegions, updateOciAccount } from "@/server/utils/db.js";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
 import {
   mergeOciCredentialFields,
@@ -87,6 +87,13 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     });
     if (!account) {
       return errorResponse(409, "OCI 帳號名稱已存在");
+    }
+    if (tenancyOcid !== existing.tenancyOcid) {
+      try {
+        await replaceCachedOciRegions(env.DB, id, []);
+      } catch {
+        // 清快取失敗不阻擋更新結果
+      }
     }
     return jsonResponse({ account: publicAccount(account) });
   } catch (error) {

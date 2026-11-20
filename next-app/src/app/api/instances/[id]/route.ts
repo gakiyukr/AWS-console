@@ -4,6 +4,7 @@ import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.j
 import { validateInput } from "@/server/utils/validate.js";
 import { resolveOciAccount } from "@/server/utils/oci-account.js";
 import { toOciAccountHttpError } from "@/server/utils/oci-account.js";
+import { resolveInstanceContext } from "@/server/utils/oci-regions.js";
 import { getInstance, terminateInstance } from "@/server/utils/oci-compute.js";
 import { ociFailureMessage } from "@/server/utils/oci-error.js";
 import { appendOperationLog } from "@/server/utils/db.js";
@@ -22,11 +23,14 @@ export async function GET(
   if (!validation.valid) {
     return errorResponse(400, validation.error);
   }
-  const accountId = new URL(request.url).searchParams.get("account_id") ?? "";
+  const query = new URL(request.url).searchParams;
+  const accountId = query.get("account_id") ?? "";
+  const region = query.get("region") ?? "";
 
   try {
-    const { ociAccount, privateKeyPem } = await resolveOciAccount(env, accountId || undefined);
-    const instance = await getInstance({ account: ociAccount, privateKeyPem }, id);
+    const resolved = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
+    const ctx = await resolveInstanceContext(env, resolved, id, region);
+    const instance = await getInstance(ctx, id);
     return jsonResponse({
       instance: {
         id: String(instance?.id || id),
@@ -35,7 +39,7 @@ export async function GET(
         shape: String(instance?.shape || ""),
         availabilityDomain: String(instance?.availabilityDomain || ""),
       },
-      region: ociAccount.region,
+      region: ctx.region,
     });
   } catch (error) {
     const httpError = toOciAccountHttpError(error);
@@ -66,12 +70,16 @@ export async function DELETE(
   const accountId = typeof body.accountId === "string" || typeof body.accountId === "number"
     ? String(body.accountId)
     : (new URL(request.url).searchParams.get("account_id") ?? "");
+  const region = typeof body.region === "string"
+    ? body.region.trim()
+    : (new URL(request.url).searchParams.get("region") ?? "").trim();
   const preserveBootVolume = Boolean(body.preserveBootVolume);
 
   let ctx;
   let displayName = "";
   try {
-    ctx = await resolveOciAccount(env, accountId || undefined);
+    const resolved = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
+    ctx = await resolveInstanceContext(env, resolved, id, region);
     const instance = await getInstance(ctx, id);
     displayName = String(instance?.displayName || "");
   } catch (error) {
@@ -89,11 +97,11 @@ export async function DELETE(
     try {
       await appendOperationLog(env.DB, {
         action: "terminate",
-        ociAccountId: ctx.account.id,
+        ociAccountId: Number(ctx.account.id),
         instanceId: id,
         displayName,
         status: "success",
-        detail: { preserve_boot_volume: preserveBootVolume },
+        detail: { preserve_boot_volume: preserveBootVolume, region: ctx.region },
       });
     } catch {
       // 日誌失敗不影響成功回應
@@ -110,7 +118,7 @@ export async function DELETE(
     try {
       await appendOperationLog(env.DB, {
         action: "terminate",
-        ociAccountId: ctx.account.id,
+        ociAccountId: Number(ctx.account.id),
         instanceId: id,
         displayName,
         status: "failure",

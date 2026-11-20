@@ -335,6 +335,47 @@ export async function addCachedRegion(db, accountId, platform, region) {
     .run();
 }
 
+// ─── OCI 帳號已訂閱區域快取 ─────────────────────────────────
+
+/**
+ * 讀取 OCI 帳號的快取訂閱區域；無快取回空陣列，由呼叫端決定是否回填。
+ * @param {D1Database} db
+ * @param {number} accountId
+ * @returns {Promise<Array<{ region: string, regionKey: string, isHomeRegion: boolean, status: string }>>}
+ */
+export async function listCachedOciRegions(db, accountId) {
+  const { results } = await db
+    .prepare("SELECT region, region_key AS regionKey, is_home_region AS isHomeRegion, status FROM oci_account_regions WHERE oci_account_id = ?1 ORDER BY region")
+    .bind(accountId)
+    .all();
+  return results.map(row => ({
+    region: String(row.region),
+    regionKey: String(row.regionKey),
+    isHomeRegion: Boolean(row.isHomeRegion),
+    status: String(row.status),
+  }));
+}
+
+/** 整批替換 OCI 帳號的訂閱區域快取（刪除全部後重寫，冪等、原子）。 */
+export async function replaceCachedOciRegions(db, accountId, subscriptions) {
+  const seen = new Set();
+  const cleaned = [];
+  for (const item of subscriptions) {
+    if (!item?.region || seen.has(item.region)) continue;
+    seen.add(item.region);
+    cleaned.push(item);
+  }
+  const statements = [
+    db.prepare("DELETE FROM oci_account_regions WHERE oci_account_id = ?1").bind(accountId),
+    ...cleaned.map(sub =>
+      db.prepare("INSERT INTO oci_account_regions (oci_account_id, region, region_key, is_home_region, status) VALUES (?1, ?2, ?3, ?4, ?5)")
+        .bind(accountId, sub.region, sub.regionKey || "", sub.isHomeRegion ? 1 : 0, sub.status || "READY")),
+  ];
+  // 空清單時只有 DELETE，仍需批次以保持原子性
+  await db.batch(statements);
+  return cleaned.length;
+}
+
 // ─── DDNS 綁定 ─────────────────────────────────────────────
 
 /**

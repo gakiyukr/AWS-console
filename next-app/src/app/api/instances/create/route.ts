@@ -30,6 +30,8 @@ export async function POST(request: Request): Promise<Response> {
   const accountId = typeof body.accountId === "string" || typeof body.accountId === "number"
     ? String(body.accountId)
     : "";
+  // 多區域：目標區域覆蓋帳號預設操作區域；AD 與子網須屬於該區域
+  const region = typeof body.region === "string" ? body.region.trim() : "";
 
   // ─── 輸入驗證 ───────────────────────────────────────────────
   const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
@@ -84,7 +86,7 @@ export async function POST(request: Request): Promise<Response> {
 
   // ─── 組 LaunchInstanceDetails 並送出 ────────────────────────
   try {
-    const { account, ociAccount, privateKeyPem } = await resolveOciAccount(env, accountId || undefined);
+    const { account, ociAccount, privateKeyPem } = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
     const instance = await launchInstance(
       { account: ociAccount, privateKeyPem },
       {
@@ -110,6 +112,7 @@ export async function POST(request: Request): Promise<Response> {
         },
       },
     );
+    const usedRegion = ociAccount.region;
 
     const instanceId = String(instance?.id || "");
     let ipv6Warning: string | null = null;
@@ -150,11 +153,12 @@ export async function POST(request: Request): Promise<Response> {
     try {
       await appendOperationLog(env.DB, {
         action: "create-instance",
-        ociAccountId: account.id,
+        ociAccountId: Number(account.id),
         instanceId,
         displayName,
         status: "success",
         detail: {
+          region: usedRegion,
           shape,
           availability_domain: availabilityDomain,
           image: imageOcid,
@@ -172,14 +176,15 @@ export async function POST(request: Request): Promise<Response> {
       ok: true,
       instanceId,
       displayName,
+      region: usedRegion,
       lifecycleState: String(instance?.lifecycleState || "PROVISIONING"),
       ...(enableIpv6 ? { ipv6Address: ipv6Address || null } : {}),
       ...(ipv6Warning ? { ipv6Warning } : {}),
       message: ipv6Warning
-        ? `「${displayName}」建立中（PROVISIONING）；${ipv6Warning}`
+        ? `「${displayName}」（${usedRegion}）建立中（PROVISIONING）；${ipv6Warning}`
         : ipv6Address
-          ? `「${displayName}」建立中（PROVISIONING），IPv6 已指派：${ipv6Address}`
-          : `「${displayName}」建立中（PROVISIONING），總覽頁會自動更新狀態。`,
+          ? `「${displayName}」（${usedRegion}）建立中（PROVISIONING），IPv6 已指派：${ipv6Address}`
+          : `「${displayName}」（${usedRegion}）建立中（PROVISIONING），總覽頁會自動更新狀態。`,
     });
   } catch (error) {
     if (error instanceof OciApiError) {

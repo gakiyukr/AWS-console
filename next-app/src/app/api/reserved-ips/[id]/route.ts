@@ -1,7 +1,8 @@
-// PUT & DELETE /api/reserved-ips/[id]：綁定、解綁與釋放保留公網 IP（Phase 2）。
+// PUT & DELETE /api/reserved-ips/[id]：綁定、解綁與釋放保留公網 IP（Phase 2，支援多區域）。
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
 import { resolveOciAccount, toOciAccountHttpError } from "@/server/utils/oci-account.js";
+import { resolveInstanceContext } from "@/server/utils/oci-regions.js";
 import { updateReservedPublicIp, deleteReservedPublicIp } from "@/server/utils/oci-network.js";
 import { ociFailureMessage } from "@/server/utils/oci-error.js";
 import { appendOperationLog } from "@/server/utils/db.js";
@@ -25,13 +26,17 @@ export async function PUT(
   const accountId = typeof body.accountId === "string" || typeof body.accountId === "number"
     ? String(body.accountId)
     : "";
+  const region = typeof body.region === "string" ? body.region.trim() : "";
   // privateIpId: 傳入目標 private IP OCID 進行指派；傳入空字串或 null 表示解綁（Unassign）
   const privateIpId = typeof body.privateIpId === "string" ? body.privateIpId.trim() : "";
   const displayName = typeof body.displayName === "string" ? body.displayName.trim() : undefined;
 
   let ctx;
+  let accountRecordId: number;
   try {
-    ctx = await resolveOciAccount(env, accountId || undefined);
+    const resolved = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
+    accountRecordId = Number(resolved.account.id);
+    ctx = await resolveInstanceContext(env, resolved, id, region);
   } catch (error) {
     const httpError = toOciAccountHttpError(error);
     return errorResponse(httpError.status, httpError.status === 500 ? ociFailureMessage(error) : httpError.body.error);
@@ -47,11 +52,11 @@ export async function PUT(
     try {
       await appendOperationLog(env.DB, {
         action: isAssign ? "assign-reserved-ip" : "unassign-reserved-ip",
-        ociAccountId: ctx.account.id,
+        ociAccountId: accountRecordId,
         instanceId: null,
         displayName: updated?.ipAddress || id,
         status: "success",
-        detail: { public_ip_id: id, private_ip_id: privateIpId },
+        detail: { public_ip_id: id, private_ip_id: privateIpId, region: ctx.region },
       });
     } catch {
       // ignore
@@ -83,10 +88,14 @@ export async function DELETE(
 
   const query = new URL(request.url).searchParams;
   const accountId = query.get("account_id") ?? "";
+  const region = (query.get("region") ?? "").trim();
 
   let ctx;
+  let accountRecordId: number;
   try {
-    ctx = await resolveOciAccount(env, accountId || undefined);
+    const resolved = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
+    accountRecordId = Number(resolved.account.id);
+    ctx = await resolveInstanceContext(env, resolved, id, region);
   } catch (error) {
     const httpError = toOciAccountHttpError(error);
     return errorResponse(httpError.status, httpError.status === 500 ? ociFailureMessage(error) : httpError.body.error);
@@ -98,11 +107,11 @@ export async function DELETE(
     try {
       await appendOperationLog(env.DB, {
         action: "delete-reserved-ip",
-        ociAccountId: ctx.account.id,
+        ociAccountId: accountRecordId,
         instanceId: null,
         displayName: id,
         status: "success",
-        detail: { public_ip_id: id },
+        detail: { public_ip_id: id, region: ctx.region },
       });
     } catch {
       // ignore

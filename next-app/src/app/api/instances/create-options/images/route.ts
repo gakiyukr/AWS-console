@@ -17,13 +17,15 @@ export async function GET(request: Request): Promise<Response> {
   const query = new URL(request.url).searchParams;
   const accountId = query.get("account_id") ?? "";
   const shape = query.get("shape") ?? "";
+  // 多區域：映像清單依目標區域取得
+  const region = query.get("region") || "";
   const shapeValidation = validateInput(shape, "shape", "shape");
   if (!shapeValidation.valid) {
     return errorResponse(400, shapeValidation.error);
   }
 
   try {
-    const { ociAccount, privateKeyPem } = await resolveOciAccount(env, accountId || undefined);
+    const { ociAccount, privateKeyPem } = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
     const images = await listImages({ account: ociAccount, privateKeyPem }, { shape });
     return jsonResponse({ images: images.slice(0, MAX_IMAGES) });
   } catch (error) {

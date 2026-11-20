@@ -6,6 +6,7 @@
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
 import { resolveOciAccount, toOciAccountHttpError } from "@/server/utils/oci-account.js";
+import { resolveInstanceContext } from "@/server/utils/oci-regions.js";
 import { getInstance, instanceAction } from "@/server/utils/oci-compute.js";
 import { OciApiError, ociFailureMessage } from "@/server/utils/oci-error.js";
 import { appendOperationLog } from "@/server/utils/db.js";
@@ -56,26 +57,29 @@ export async function POST(
   const accountId = typeof body.accountId === "string" || typeof body.accountId === "number"
     ? String(body.accountId)
     : "";
+  const region = typeof body.region === "string" ? body.region.trim() : "";
 
   try {
-    const { account, ociAccount, privateKeyPem } = await resolveOciAccount(env, accountId || undefined);
-    const instance = await getInstance({ account: ociAccount, privateKeyPem }, id);
+    const resolved = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
+    // 多區域：優先使用呼叫端指定 region，否則從 OCID 反推實際 region
+    const ctx = await resolveInstanceContext(env, resolved, id, region);
+    const instance = await getInstance(ctx, id);
     const displayName = String(instance?.displayName || "");
     const currentState = String(instance?.lifecycleState || "");
     if (currentState === "TERMINATED" || currentState === "TERMINATING") {
       return errorResponse(409, "此執行個體已終止，無法執行電源操作。");
     }
 
-    await instanceAction({ account: ociAccount, privateKeyPem }, id, actionSpec.ociAction);
+    await instanceAction(ctx, id, actionSpec.ociAction);
 
     try {
       await appendOperationLog(env.DB, {
         action: actionKey,
-        ociAccountId: account.id,
+        ociAccountId: Number(resolved.account.id),
         instanceId: id,
         displayName,
         status: "success",
-        detail: { oci_action: actionSpec.ociAction, previous_state: currentState },
+        detail: { oci_action: actionSpec.ociAction, previous_state: currentState, region: ctx.region },
       });
     } catch {
       // OCI 操作已成功時，稽核日誌失敗不應回報操作失敗。

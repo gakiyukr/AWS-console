@@ -342,16 +342,20 @@ Allow group <group> to read instance-agent-family in compartment <compartment>
   帳號（AWS／OCI）綁定代理後，該帳號的所有 API 呼叫改由代理出口
   （Workers 走 cloudflare:sockets 隧道、Node 走 agent）。
 - `/api/instances`：OCI 執行個體列表（即時 ListInstances + VNIC 豐化 + D1 別名，
-  每頁 20 台、`opc-next-page` 續頁）。`/api/instances/[id]`：單台查詢（前端電源
+  每頁 20 台、`opc-next-page` 續頁；多區域帳號未指定 `region` 時並行合併
+  所有已訂閱 READY 區域）。`/api/instances/[id]`：單台查詢（前端電源
   輪詢用）與 DELETE（終止，可保留開機碟）。`/[id]/action`：`start`、`stop`、
   `force-stop`、`reboot`、`force-reboot`。`/[id]/reboot-ip`：刪除並重建臨時公網
   IP（SSE）。`/[id]/ipv6`：一鍵 IPv6 六步開通（SSE）。`/[id]/firewall`：Security
   List 全開，預設併發主機 iptables 清理（Cloud Agent Run Command）。`/[id]/
   host-firewall`：僅清理主機防火牆。`/[id]/alias`：自訂別名與備註。`/create-options`
-  與 `/create-options/images`：建機選項聚合；`/create`：建立執行個體。
+  與 `/create-options/images`：建機選項聚合；`/create`：建立執行個體
+  （支援目標 `region`）。
 - `/api/oci-accounts`：OCI 帳號（API 簽章金鑰）CRUD；`/:id/test` 以 ListRegions
-  驗證簽章。可綁出口代理（`proxyId`）。
-- `/api/reserved-ips`：OCI 保留公網 IP 列表／申請；`/:id` PUT 綁定／解綁、DELETE 釋放。
+  驗證簽章；`/:id/regions` 讀取／手動刷新帳號已訂閱區域快取（Identity
+  `ListRegionSubscriptions`）。可綁出口代理（`proxyId`）。
+- `/api/reserved-ips`：OCI 保留公網 IP 列表／申請（支援多區域合併查詢與指定
+  區域建立）；`/:id` PUT 綁定／解綁、DELETE 釋放。
 - `/api/captcha-settings`：多渠道人機驗證後臺——`GET` 回全部渠道狀態、`PUT` 儲存
   單一渠道（provider：cap／turnstile／hcaptcha）、`DELETE ?provider=` 移除。
 - `/api/logs`：可依 `account_id`、`action`、`status`、`limit` 讀取稽核日誌。
@@ -411,6 +415,9 @@ migrations 位於 `server/db/migrations`，由 `wrangler.jsonc` 的 `migrations_
 - `0019_ddns_multi_domains.sql`：DDNS 改為多域名（`ddns_domains`）＋前綴綁定
   （`ddns_bindings`，`UNIQUE(domain_id, prefix)`）；舊單列設定與
   `machines.ddns_hostname` 自動遷移後移除舊表／舊欄。
+- `0021_oci_account_regions.sql`：OCI 帳號已訂閱區域快取表（`oci_account_regions`），
+  儲存 `region` identifier 與 `region_key`（如 `FRA`），供單帳號多區域列表
+  與依 OCID 反推區域使用。
 
 ## 已知建置注意事項
 

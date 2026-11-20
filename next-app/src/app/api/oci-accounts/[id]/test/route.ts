@@ -2,8 +2,9 @@
 // （簽章正確 + Tenancy 可用），成功時更新 lastVerifiedAt。
 import { toOciAccountHttpError, resolveOciAccount } from "@/server/utils/oci-account.js";
 import { ociRequestJson } from "@/server/utils/oci-request.js";
+import { listRegionSubscriptions } from "@/server/utils/oci-regions.js";
 import { ociFailureMessage } from "@/server/utils/oci-error.js";
-import { markOciAccountVerified } from "@/server/utils/db.js";
+import { listCachedOciRegions, markOciAccountVerified, replaceCachedOciRegions } from "@/server/utils/db.js";
 import { jsonResponse } from "@/server/utils/http.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
@@ -22,6 +23,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       path: "/20160918/regions",
     });
     await markOciAccountVerified(env.DB, account.id);
+    // 快取為空時順手回填訂閱區域；IAM 缺 TENANCY_INSPECT 等失敗不影響憑證驗證結果。
+    try {
+      const accountId = Number(account.id);
+      const cached = await listCachedOciRegions(env.DB, accountId);
+      if (cached.length === 0) {
+        const subscriptions = await listRegionSubscriptions({ account: ociAccount, privateKeyPem });
+        await replaceCachedOciRegions(env.DB, accountId, subscriptions);
+      }
+    } catch {
+      // ignore
+    }
     return jsonResponse({ ok: true, message: "OCI 憑證驗證成功" });
   } catch (error) {
     const httpError = toOciAccountHttpError(error);

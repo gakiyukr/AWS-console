@@ -5,6 +5,7 @@
 import { errorResponse, readJsonBody, sseResponse, toHttpError } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
 import { resolveOciAccount } from "@/server/utils/oci-account.js";
+import { resolveInstanceContext } from "@/server/utils/oci-regions.js";
 import { getInstance } from "@/server/utils/oci-compute.js";
 import {
   getPrimaryVnic,
@@ -37,6 +38,7 @@ export async function POST(
   const accountId = typeof body.accountId === "string" || typeof body.accountId === "number"
     ? String(body.accountId)
     : "";
+  const region = typeof body.region === "string" ? body.region.trim() : "";
 
   // 操作前置（憑證、VNIC）在建立串流前完成，錯誤以一般 JSON 回應
   let ctx;
@@ -44,19 +46,21 @@ export async function POST(
   let vnicId = "";
   let vnic;
   try {
-    const resolved = await resolveOciAccount(env, accountId || undefined);
-    const instance = await getInstance(resolved, id);
+    const resolved = await resolveOciAccount(env, accountId || undefined, { region: region || undefined });
+    // 多區域：優先使用指定 region，否則從 OCID 反推實際 region
+    const instanceCtx = await resolveInstanceContext(env, resolved, id, region);
+    const instance = await getInstance(instanceCtx, id);
     displayName = String(instance?.displayName || "");
-    const vnicInfo = await getPrimaryVnic(resolved, {
+    const vnicInfo = await getPrimaryVnic(instanceCtx, {
       instanceId: id,
-      compartmentOcid: resolved.ociAccount.compartmentOcid,
+      compartmentOcid: instanceCtx.account.compartmentOcid,
     });
     if (!vnicInfo) {
       return errorResponse(409, "此執行個體沒有附加的 VNIC。");
     }
     vnicId = vnicInfo.vnicId;
     vnic = vnicInfo.vnic;
-    ctx = resolved;
+    ctx = { ...resolved, ociAccount: instanceCtx.account };
   } catch (error) {
     const httpError = toHttpError(error);
     return errorResponse(httpError.status, httpError.status === 500 ? ociFailureMessage(error) : httpError.body.error);
@@ -82,11 +86,11 @@ export async function POST(
       try {
         await appendOperationLog(env.DB, {
           action: "rotate-ipv6",
-          ociAccountId: ctx.account.id,
+          ociAccountId: Number(ctx.account.id),
           instanceId: id,
           displayName,
           status: "success",
-          detail: { previous_ip: result.previousIp, new_ip: result.newIp, opened: result.opened },
+          detail: { previous_ip: result.previousIp, new_ip: result.newIp, opened: result.opened, region: ctx.ociAccount.region },
         });
       } catch {
         // 操作已成功時，稽核日誌失敗不影響結果事件
@@ -97,7 +101,7 @@ export async function POST(
       try {
         await appendOperationLog(env.DB, {
           action: "rotate-ipv6",
-          ociAccountId: ctx.account.id,
+          ociAccountId: Number(ctx.account.id),
           instanceId: id,
           displayName,
           status: "failure",

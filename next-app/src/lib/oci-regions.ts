@@ -54,3 +54,16 @@ export const OCI_REGIONS: OciRegionOption[] = [
   { value: "us-phoenix-1", label: "美西 鳳凰城 (us-phoenix-1)" },
   { value: "us-sanjose-1", label: "美西 聖荷西 (us-sanjose-1)" },
 ];
+
+/** OCI 區域代碼 → 繁中顯示標籤的查詢表（來自上方清單）。 */
+const OCI_REGION_LABELS: Record<string, string> = Object.fromEntries(
+  OCI_REGIONS.map(option => [option.value, option.label]),
+);
+
+/**
+ * 組出 OCI 區域的顯示文字；清單未收錄的區域（政府雲等）回退純代碼。
+ * @param region OCI region identifier（如 eu-frankfurt-1）
+ */
+export function ociRegionLabel(region: string): string {
+  return OCI_REGION_LABELS[region] || region;
+}

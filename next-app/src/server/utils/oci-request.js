@@ -10,8 +10,8 @@ import { base64ToBytes, bytesToBase64 } from "./bytes.js";
 import { OciApiError, ociErrorFromResponse } from "./oci-error.js";
 import { fetchViaProxy } from "./proxy.js";
 
-export function ociEndpoint(region) {
-  return `https://iaas.${region}.oraclecloud.com`;
+export function ociEndpoint(region, service = "iaas") {
+  return `https://${service}.${region}.oraclecloud.com`;
 }
 
 // 單一 OCI 請求的逾時上限（毫秒）。Run Command 等建立類呼叫也是即時回應，
@@ -166,10 +166,11 @@ function toSearchParams(query) {
 }
 
 /**
- * 對 OCI IAAS 端點發出已簽章請求，非 2xx 時拋出 OciApiError。
+ * 對 OCI 端點發出已簽章請求，非 2xx 時拋出 OciApiError。
  * @param {{
  *   account: { tenancyOcid: string, userOcid: string, fingerprint: string, region: string },
  *   privateKeyPem: string,
+ *   service?: string,
  *   method: string,
  *   path: string,
  *   query?: URLSearchParams | Record<string, string> | null,
@@ -178,9 +179,9 @@ function toSearchParams(query) {
  * @returns {Promise<Response>}
  */
 export async function ociSignedFetch(options) {
-  const { account, privateKeyPem, method, path, query = null, body = undefined } = options;
+  const { account, privateKeyPem, service = "iaas", method, path, query = null, body = undefined } = options;
 
-  const url = new URL(path, ociEndpoint(account.region));
+  const url = new URL(path, ociEndpoint(account.region, service));
   for (const [key, value] of toSearchParams(query)) {
     url.searchParams.append(key, value);
   }

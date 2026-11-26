@@ -376,6 +376,75 @@ export async function replaceCachedOciRegions(db, accountId, subscriptions) {
   return cleaned.length;
 }
 
+// ─── OCI 執行個體清單快取 ───────────────────────────────────
+
+const OCI_INSTANCE_CACHE_COLUMNS = "region, instance_id AS id, display_name AS displayName, lifecycle_state AS lifecycleState, shape, availability_domain AS availabilityDomain, time_created AS timeCreated, public_ip AS publicIp, ipv6_address AS ipv6Address, cached_at AS cachedAt";
+
+/**
+ * 讀取 OCI 機器清單快取；可依 region 篩選。
+ * @param {D1Database} db
+ * @param {number} accountId
+ * @param {{ region?: string }} [options]
+ * @returns {Promise<Array<Record<string, unknown>>>}
+ */
+export async function listCachedOciInstances(db, accountId, options = {}) {
+  const base = `SELECT ${OCI_INSTANCE_CACHE_COLUMNS} FROM oci_instance_cache WHERE oci_account_id = ?1`;
+  const statement = options.region
+    ? db.prepare(`${base} AND region = ?2 ORDER BY time_created DESC`).bind(accountId, options.region)
+    : db.prepare(`${base} ORDER BY time_created DESC`).bind(accountId);
+  const { results } = await statement.all();
+  return (results || []).map(row => ({ ...row }));
+}
+
+/** 快取最後同步時間（該帳號最新一筆）；無資料回 null。 */
+export async function getOciInstancesCacheTime(db, accountId) {
+  const row = await db
+    .prepare("SELECT MAX(cached_at) AS cachedAt FROM oci_instance_cache WHERE oci_account_id = ?1")
+    .bind(accountId)
+    .first();
+  return row?.cachedAt ? String(row.cachedAt) : null;
+}
+
+/**
+ * 以本次同步結果整批替換帳號的機器快取（原子批次）。
+ * OCI 側已刪除的機器不會留下殘影。
+ * @param {D1Database} db
+ * @param {number} accountId
+ * @param {Array<Record<string, unknown>>} instances
+ */
+export async function replaceCachedOciInstances(db, accountId, instances) {
+  const seen = new Set();
+  const rows = [];
+  for (const item of instances) {
+    const id = String(item?.id || "");
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    rows.push(item);
+  }
+  const statements = [
+    db.prepare("DELETE FROM oci_instance_cache WHERE oci_account_id = ?1").bind(accountId),
+    ...rows.map(item =>
+      db.prepare(`INSERT INTO oci_instance_cache
+        (oci_account_id, region, instance_id, display_name, lifecycle_state, shape,
+         availability_domain, time_created, public_ip, ipv6_address, cached_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))`)
+        .bind(
+          accountId,
+          String(item.region || ""),
+          String(item.id),
+          String(item.displayName || ""),
+          String(item.lifecycleState || ""),
+          String(item.shape || ""),
+          String(item.availabilityDomain || ""),
+          item.timeCreated ? String(item.timeCreated) : null,
+          item.publicIp ? String(item.publicIp) : null,
+          item.ipv6Address ? String(item.ipv6Address) : null,
+        )),
+  ];
+  await db.batch(statements);
+  return rows.length;
+}
+
 // ─── DDNS 綁定 ─────────────────────────────────────────────
 
 /**

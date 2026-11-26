@@ -97,6 +97,8 @@ export default function InstancesPage() {
   const [subscribedRegions, setSubscribedRegions] = useState<string[]>([]);
   const [regionFilter, setRegionFilter] = useState<string>("");
   const regionFilterRef = useRef<string>("");
+  // 快取同步時間（列表預設讀 D1 快取，不每次呼叫 OCI）
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   // 電源操作後輪詢中的執行個體 OCID 集合
   const [pollingIds, setPollingIds] = useState<Set<string>>(new Set());
@@ -143,7 +145,7 @@ export default function InstancesPage() {
     }
   }, []);
 
-  const loadInstances = useCallback(async (targetAccountId: string, page: string | null = null, filterRegion: string | null = null) => {
+  const loadInstances = useCallback(async (targetAccountId: string, page: string | null = null, filterRegion: string | null = null, refresh = false) => {
     setLoading(true);
     try {
       const query = new URLSearchParams();
@@ -151,12 +153,22 @@ export default function InstancesPage() {
       if (page) query.set("page", page);
       const activeFilter = filterRegion ?? regionFilterRef.current;
       if (activeFilter) query.set("region", activeFilter);
+      // 預設讀後端快取；只有「重新整理」才即時呼叫 OCI 並回寫
+      if (refresh) query.set("refresh", "1");
       const response = await fetch(`/api/instances?${query.toString()}`);
       if (!response.ok) throw new Error(await readError(response));
-      const payload = await readJson<{ instances: InstanceRow[], nextPage: string | null, region: string, warnings?: string[] }>(response);
+      const payload = await readJson<{
+        instances: InstanceRow[],
+        nextPage: string | null,
+        region: string,
+        warnings?: string[],
+        cached?: boolean,
+        cachedAt?: string | null,
+      }>(response);
       setInstances(payload.instances);
       setNextPage(payload.nextPage);
       setRegion(payload.region || "");
+      setCachedAt(payload.cachedAt || null);
       for (const warning of payload.warnings || []) {
         toastDanger(warning);
       }
@@ -420,9 +432,10 @@ export default function InstancesPage() {
           <p className="text-sm text-muted">
             {selectedAccount
               ? (!regionFilter && subscribedRegions.length > 1
-                  ? `compartment 即時清單 · 全部已訂閱區域（共 ${subscribedRegions.length} 區）`
-                  : `compartment 即時清單 · ${ociRegionLabel(regionFilter || region || selectedAccount.region)}`)
-              : "即時列出 compartment 內的執行個體"}
+                  ? `快取清單 · 全部已訂閱區域（共 ${subscribedRegions.length} 區）`
+                  : `快取清單 · ${ociRegionLabel(regionFilter || region || selectedAccount.region)}`)
+              : "快取列出 compartment 內的執行個體"}
+            {cachedAt ? ` · 同步於 ${new Date(cachedAt.replace(" ", "T") + "Z").toLocaleString("zh-TW")}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -470,9 +483,9 @@ export default function InstancesPage() {
               />
             </div>
           ) : null}
-          <Button size="sm" isDisabled={loading} onPress={() => loadInstances(accountId)}>
+          <Button size="sm" isDisabled={loading} onPress={() => loadInstances(accountId, null, null, true)}>
             {loading ? <Loader2 aria-hidden size={16} className="animate-spin" /> : <RefreshCw aria-hidden size={16} />}
-            重新整理
+            從 OCI 重新整理
           </Button>
         </div>
       </div>

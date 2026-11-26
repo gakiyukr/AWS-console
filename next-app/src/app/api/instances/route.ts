@@ -1,10 +1,10 @@
-// GET /api/instances：即時列出 compartment 內的執行個體，逐台附帶主要
-// VNIC 的公網 IP 與 IPv6。清單直接來自 ListInstances API（不落庫）。
-// region 參數：指定時只查該區域（支援 opc-next-page 分頁）；未指定時並行
-// 查詢帳號所有已訂閱區域（快取，migration 0021）各第一頁，合併按
-// timeCreated DESC 截前 20 台。多區域合併模式不回傳 nextPage。
-// 子請求數：區域數 + 每台 2（ListVnicAttachments + GetVnic），20 台約 41+N，
-// 低於 Workers 單請求 50 上限。
+// GET /api/instances：OCI 執行個體清單。
+// 預設讀 D1 快取（oci_instance_cache，migration 0022），不打 OCI API；
+// ?refresh=1 才即時呼叫 ListInstances（多區域並行）並整批回寫快取。
+// 回應附 cachedAt（快取同步時間）與 cached 旗標，供前端顯示。
+// region 參數：指定時只查該區域；未指定時查帳號所有已訂閱 READY 區域。
+// 即時查詢時的單台 IP 補齊：每台 2 個子請求（ListVnicAttachments + GetVnic），
+// 受 Workers 單請求 50 個子請求上限約束，故限制單次同步的機器數。
 import { errorResponse, jsonResponse } from "@/server/utils/http.js";
 import { validateInput } from "@/server/utils/validate.js";
 import { resolveOciAccount, toOciAccountHttpError } from "@/server/utils/oci-account.js";
@@ -12,12 +12,30 @@ import { listInstances } from "@/server/utils/oci-compute.js";
 import { getPrimaryVnic } from "@/server/utils/oci-network.js";
 import { getAllInstanceAliases } from "@/server/utils/instance-aliases.js";
 import { ociFailureMessage } from "@/server/utils/oci-error.js";
-import { listCachedOciRegions } from "@/server/utils/db.js";
+import {
+  getOciInstancesCacheTime,
+  listCachedOciInstances,
+  listCachedOciRegions,
+  replaceCachedOciInstances,
+} from "@/server/utils/db.js";
 import { readyOciRegions } from "@/server/utils/oci-regions.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 
-const MAX_PAGE_SIZE = 20;
+const MAX_SYNC_INSTANCES = 20;
+
+type CachedRow = {
+  id: string
+  displayName: string
+  lifecycleState: string
+  shape: string
+  region: string
+  availabilityDomain: string
+  timeCreated: string | null
+  publicIp: string | null
+  ipv6Address: string | null
+  cachedAt?: string
+};
 
 export async function GET(request: Request): Promise<Response> {
   const denied = await requireApiSession(request);
@@ -25,8 +43,8 @@ export async function GET(request: Request): Promise<Response> {
   const env = await getEnv();
   const query = new URL(request.url).searchParams;
   const accountId = query.get("account_id") ?? "";
-  const page = query.get("page") || "";
   const regionParam = query.get("region") || "";
+  const forceRefresh = query.get("refresh") === "1";
   if (accountId) {
     const validation = validateInput(accountId, undefined, "account_id");
     if (!validation.valid || !/^\d+$/.test(accountId)) {
@@ -34,73 +52,50 @@ export async function GET(request: Request): Promise<Response> {
     }
   }
 
+  const database = env.DB as D1Database;
+
   try {
-    // 帳號與私鑰只解密一次；多區域切換僅覆蓋 account.region。
-    const { ociAccount: defaultOciAccount, privateKeyPem } = await resolveOciAccount(
+    // 先解析帳號取得 id（也可驗證憑證設定）；不觸發任何 OCI API。
+    const { account, ociAccount: defaultOciAccount, privateKeyPem } = await resolveOciAccount(
       env,
       accountId || undefined,
-      { region: regionParam || undefined },
     );
-
-    // 多區域合併模式：未指定 region、非分頁請求、快取含 ≥2 READY 區域。
-    const database = env.DB as D1Database;
-    let regions: string[] = [];
-    if (!regionParam && !page) {
-      regions = readyOciRegions(
-        await listCachedOciRegions(database, Number(accountId) || defaultOciAccount.id),
-      ).map(item => item.region);
-    }
-
+    const resolvedAccountId = Number(account.id);
     const aliasMap = await getAllInstanceAliases(database) as Record<string, { alias: string, notes: string }>;
 
-    if (regions.length > 1) {
-      // 並行抓各區域第一頁；單區域失敗不影響其他區域，錯誤以 warnings 回報。
-      const settled = await Promise.allSettled(regions.map(async (region) => {
-        const ctx = { account: { ...defaultOciAccount, region }, privateKeyPem };
-        const result = await listInstances(ctx, { page: null });
-        return { region, ctx, ...result };
-      }));
-      const warnings: string[] = [];
-      const merged: Array<{ instance: unknown, region: string, ctx: { account: { compartmentOcid: string, id: number }, privateKeyPem: string } }> = [];
-      settled.forEach((outcome, index) => {
-        if (outcome.status === "fulfilled") {
-          for (const instance of outcome.value.items) {
-            merged.push({ instance, region: outcome.value.region, ctx: outcome.value.ctx });
-          }
-        } else {
-          warnings.push(`區域 ${regions[index]} 清單取得失敗：${ociFailureMessage(outcome.reason)}`);
-        }
-      });
-      merged.sort((a, b) => String((b.instance as { timeCreated?: string })?.timeCreated || "")
-        .localeCompare(String((a.instance as { timeCreated?: string })?.timeCreated || "")));
-      const maxInstances = Math.max(1, Math.min(MAX_PAGE_SIZE, Math.floor((46 - regions.length) / 2)));
-      if (merged.length > maxInstances) {
-        warnings.push(`多區域合計僅顯示前 ${maxInstances} 台；請選擇單一區域檢視完整清單。`);
+    // 讀快取模式（預設）
+    if (!forceRefresh) {
+      const cachedAt = await getOciInstancesCacheTime(database, resolvedAccountId);
+      // 快取為空（首次使用或新帳號）：自動同步一次
+      if (cachedAt === null) {
+        return await syncInstances({
+          database,
+          accountId: resolvedAccountId,
+          defaultOciAccount,
+          privateKeyPem,
+          regionParam,
+          aliasMap,
+          triggeredBy: "empty-cache",
+        });
       }
-      const trimmed = merged.slice(0, maxInstances);
-
-      const enriched = await Promise.all(trimmed.map(async ({ instance, region, ctx }) =>
-        enrichInstance(instance, region, ctx as { account: { compartmentOcid: string, id: number }, privateKeyPem: string }, aliasMap, defaultOciAccount.compartmentOcid)));
+      const rows = await listCachedOciInstances(database, resolvedAccountId, { region: regionParam || undefined }) as CachedRow[];
       return jsonResponse({
-        instances: enriched,
+        instances: attachAliases(rows, aliasMap),
         nextPage: null,
-        region: regions.join(","),
-        warnings: warnings.length > 0 ? warnings : undefined,
+        region: regionParam || defaultOciAccount.region,
+        cached: true,
+        cachedAt,
       });
     }
 
-    // 單一區域模式（明確指定 region、分頁、或快取無多區域）
-    const ctx = { account: defaultOciAccount, privateKeyPem };
-    const { items, nextPage } = await listInstances(ctx, { page: page || null });
-
-    const trimmed = items.slice(0, MAX_PAGE_SIZE);
-    const enriched = await Promise.all(trimmed.map((instance: unknown) =>
-      enrichInstance(instance, defaultOciAccount.region, ctx, aliasMap, defaultOciAccount.compartmentOcid)));
-
-    return jsonResponse({
-      instances: enriched,
-      nextPage: nextPage || null,
-      region: defaultOciAccount.region,
+    return await syncInstances({
+      database,
+      accountId: resolvedAccountId,
+      defaultOciAccount,
+      privateKeyPem,
+      regionParam,
+      aliasMap,
+      triggeredBy: "manual",
     });
   } catch (error) {
     const httpError = toOciAccountHttpError(error);
@@ -108,33 +103,111 @@ export async function GET(request: Request): Promise<Response> {
   }
 }
 
-/** 逐台補主要 VNIC 的公網 IP 與 IPv6；單台失敗不影響整頁（IP 欄位留空）。 */
+/** 為快取列補上 alias／notes（DB 內的使用者標記）。 */
+function attachAliases(rows: CachedRow[], aliasMap: Record<string, { alias: string, notes: string }>) {
+  return rows.map(row => ({
+    ...row,
+    alias: aliasMap[row.id]?.alias || null,
+    notes: aliasMap[row.id]?.notes || null,
+  }));
+}
+
+/** 即時同步：多區域並行 ListInstances → 補 IP → 整批回寫快取。 */
+async function syncInstances({
+  database,
+  accountId,
+  defaultOciAccount,
+  privateKeyPem,
+  regionParam,
+  aliasMap,
+  triggeredBy,
+}: {
+  database: D1Database
+  accountId: number
+  defaultOciAccount: { id: number, region: string, compartmentOcid: string }
+  privateKeyPem: string
+  regionParam: string
+  aliasMap: Record<string, { alias: string, notes: string }>
+  triggeredBy: string
+}) {
+  let regions: string[];
+  if (regionParam) {
+    regions = [regionParam];
+  } else {
+    const cached = readyOciRegions(await listCachedOciRegions(database, accountId)).map(item => item.region);
+    regions = cached.length > 0 ? cached : [defaultOciAccount.region];
+  }
+
+  const settled = await Promise.allSettled(regions.map(async (region) => {
+    const ctx = { account: { ...defaultOciAccount, region }, privateKeyPem };
+    const result = await listInstances(ctx, { page: null });
+    return { region, ctx, items: result.items as Array<Record<string, unknown>> };
+  }));
+
+  const warnings: string[] = [];
+  const merged: Array<{ instance: Record<string, unknown>, region: string, ctx: { account: { compartmentOcid: string, id: number }, privateKeyPem: string } }> = [];
+  let firstError: unknown = null;
+  settled.forEach((outcome, index) => {
+    if (outcome.status === "fulfilled") {
+      for (const instance of outcome.value.items) {
+        merged.push({ instance, region: outcome.value.region, ctx: outcome.value.ctx as never });
+      }
+    } else {
+      firstError ??= outcome.reason;
+      warnings.push(`區域 ${regions[index]} 清單取得失敗：${ociFailureMessage(outcome.reason)}`);
+    }
+  });
+
+  // 全部區域都失敗時，把第一個錯誤往上拋（讓前端看到明確原因）
+  if (merged.length === 0 && firstError) {
+    throw firstError;
+  }
+
+  merged.sort((a, b) => String(b.instance?.timeCreated || "").localeCompare(String(a.instance?.timeCreated || "")));
+  const limited = merged.slice(0, MAX_SYNC_INSTANCES);
+  if (merged.length > MAX_SYNC_INSTANCES) {
+    warnings.push(`本次僅同步前 ${MAX_SYNC_INSTANCES} 台；請選擇單一區域以取得完整清單。`);
+  }
+
+  const enriched = await Promise.all(limited.map(async ({ instance, region, ctx }) =>
+    enrichInstance(instance, region, ctx, defaultOciAccount.compartmentOcid)));
+
+  await replaceCachedOciInstances(database, accountId, enriched);
+  const cachedAt = await getOciInstancesCacheTime(database, accountId);
+
+  console.log("[oci instances] synced", { accountId, regions: regions.length, count: enriched.length, triggeredBy });
+
+  return jsonResponse({
+    instances: attachAliases(enriched as CachedRow[], aliasMap),
+    nextPage: null,
+    region: regions.length === 1 ? regions[0] : regions.join(","),
+    cached: false,
+    cachedAt,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  });
+}
+
+/** 逐台補主要 VNIC 的公網 IP 與 IPv6；單台失敗不影響整批（IP 欄位留空）。 */
 async function enrichInstance(
-  instance: unknown,
+  instance: Record<string, unknown>,
   region: string,
-  ctx: { account: { compartmentOcid: string, id: number }, privateKeyPem: string },
-  aliasMap: Record<string, { alias: string, notes: string }>,
+  ctx: { account: { compartmentOcid: string }, privateKeyPem: string },
   compartmentOcid: string,
 ) {
-  const data = instance as { id?: string, displayName?: string, lifecycleState?: string, shape?: string, availabilityDomain?: string, timeCreated?: string };
-  const instanceId = String(data?.id || "");
-  const aliasData = aliasMap[instanceId];
   const base = {
-    id: instanceId,
-    displayName: String(data?.displayName || ""),
-    alias: aliasData?.alias || null,
-    notes: aliasData?.notes || null,
-    lifecycleState: String(data?.lifecycleState || ""),
-    shape: String(data?.shape || ""),
+    id: String(instance?.id || ""),
+    displayName: String(instance?.displayName || ""),
+    lifecycleState: String(instance?.lifecycleState || ""),
+    shape: String(instance?.shape || ""),
     region,
-    availabilityDomain: String(data?.availabilityDomain || ""),
-    timeCreated: data?.timeCreated ? String(data.timeCreated) : null,
+    availabilityDomain: String(instance?.availabilityDomain || ""),
+    timeCreated: instance?.timeCreated ? String(instance.timeCreated) : null,
     publicIp: null as string | null,
     ipv6Address: null as string | null,
   };
   try {
     const vnicInfo = await getPrimaryVnic(
-      ctx,
+      ctx as never,
       { instanceId: base.id, compartmentOcid: compartmentOcid || ctx.account.compartmentOcid },
     );
     if (vnicInfo) {
@@ -144,7 +217,7 @@ async function enrichInstance(
       base.ipv6Address = firstV6 ? String(firstV6.address) : null;
     }
   } catch {
-    // IP 資訊取得失敗不中斷列表
+    // IP 資訊取得失敗不中斷清單
   }
   return base;
 }

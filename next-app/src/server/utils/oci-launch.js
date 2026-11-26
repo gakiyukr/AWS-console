@@ -93,12 +93,25 @@ export async function listCreateOptions(ctx) {
       .map(domain => ({ name: String(domain.name) })),
     shapes: (Array.isArray(shapes) ? shapes : [])
       .filter(item => item?.shape)
-      .map(item => ({
-        shape: String(item.shape),
-        isFlex: String(item.shape).endsWith(".Flex"),
-        defaultOcpus: Number(item.ocpus) || 1,
-        defaultMemoryInGBs: Number(item.memoryInGBs) || 1,
-      })),
+      .map(item => {
+        const shape = String(item.shape);
+        const isFlex = shape.endsWith(".Flex");
+        return {
+          shape,
+          isFlex,
+          // OCI 回傳的 ocpus／memoryInGBs：固定型號為實際規格，Flex 為允許上限
+          defaultOcpus: Number(item.ocpus) || 1,
+          defaultMemoryInGBs: Number(item.memoryInGBs) || 1,
+          // 免費額度型號：A1.Flex（ARM 4 OCPU／24GB）與 E2.1.Micro（AMD 1/8 OCPU／1GB）
+          isFreeArm: shape === "VM.Standard.A1.Flex",
+          isFreeAmd: shape === "VM.Standard.E2.1.Micro",
+        };
+      })
+      // 免費 ARM 置頂、免費 AMD 次之，其餘依 OCPU/記憶體由小到大（入門款在前）
+      .sort((a, b) => {
+        const rank = (item) => (item.isFreeArm ? 0 : item.isFreeAmd ? 1 : 2);
+        return rank(a) - rank(b) || a.defaultOcpus - b.defaultOcpus || a.defaultMemoryInGBs - b.defaultMemoryInGBs;
+      }),
     networks,
   };
 }

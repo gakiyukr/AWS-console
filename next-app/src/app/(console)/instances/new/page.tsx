@@ -54,6 +54,16 @@ interface OciImage {
 
 // Always Free 形狀的提示徽章
 const FREE_SHAPES = new Set(["VM.Standard.A1.Flex", "VM.Standard.E2.1.Micro"]);
+
+/** Shape 下拉標籤：免費型號標「免費」，其餘顯示 OCPU／記憶體規格。 */
+function shapeOptionLabel(item: { shape: string, isFlex: boolean, defaultOcpus: number, defaultMemoryInGBs: number }): string {
+  if (item.shape === "VM.Standard.A1.Flex") return `★ 免費 ARM · ${item.shape}（最多 4 OCPU / 24GB）`;
+  if (item.shape === "VM.Standard.E2.1.Micro") return `★ 免費 AMD · ${item.shape}（1/8 OCPU / 1GB）`;
+  // Flex 型號的數值是允許上限，固定型號為實際規格
+  const cpu = item.isFlex ? `最多 ${item.defaultOcpus} OCPU` : `${item.defaultOcpus} OCPU`;
+  const memory = item.isFlex ? `最多 ${item.defaultMemoryInGBs} GB` : `${item.defaultMemoryInGBs} GB`;
+  return `${item.shape}（${cpu} / ${memory}）`;
+}
 const FREE_TIER_HINTS: Record<string, string> = {
   "VM.Standard.A1.Flex": "Always Free：帳號內合計最多 4 OCPU / 24 GB 記憶體",
   "VM.Standard.E2.1.Micro": "Always Free：每月 2 台（x86 微型）",
@@ -449,7 +459,7 @@ export default function NewInstancePage() {
                     disabled={submitting || optionsLoading}
                     options={(options?.shapes || []).map(item => ({
                       value: item.shape,
-                      label: item.shape,
+                      label: shapeOptionLabel(item),
                     }))}
                     onChange={setShape}
                   />

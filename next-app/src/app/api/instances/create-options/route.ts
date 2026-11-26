@@ -29,13 +29,14 @@ export async function GET(request: Request): Promise<Response> {
     return jsonResponse({ ...options, compartmentOcid: ociAccount.compartmentOcid, region: ociAccount.region });
   } catch (error) {
     // 記錄 OCI 原始錯誤（代碼／狀態／訊息），Dashboard Workers Logs 可查
+    const diag = error as { ociCode?: string, statusCode?: number };
     console.error("[oci create-options] failed", {
       accountId: accountId || "default",
       region: region || "default",
       message: error instanceof Error ? error.message : String(error),
-      ociCode: /** @type {{ ociCode?: string }} */ (error)?.ociCode || null,
-      status: /** @type {{ statusCode?: number }} */ (error)?.statusCode || null,
-      stack: error instanceof Error ? error.stack : null,
+      ociCode: diag?.ociCode ?? null,
+      status: diag?.statusCode ?? null,
+      stack: error instanceof Error ? error.stack ?? null : null,
     });
     const httpError = toOciAccountHttpError(error);
     return errorResponse(httpError.status, httpError.status === 500 ? ociFailureMessage(error) : httpError.body.error);

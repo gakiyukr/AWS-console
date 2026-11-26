@@ -5,13 +5,14 @@
 // 送出後為 PROVISIONING 過渡態，總覽頁會自動輪詢到 RUNNING。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Plus } from "lucide-react";
+import { ArrowLeft, Loader2, Network, Plus } from "lucide-react";
 import Link from "next/link";
 import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
 import { Chip } from "@/components/chip";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
+import { readDeploymentStream } from "@/lib/deployment-stream";
 import { CustomSelect } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -100,6 +101,9 @@ export default function NewInstancePage() {
   // 多區域：訂閱區域清單與目前選定的目標區域
   const [subscribedRegions, setSubscribedRegions] = useState<string[]>([]);
   const [region, setRegion] = useState("");
+  // 一鍵初始化網路（VCN／IGW／路由／安全清單／公開子網）
+  const [initializingNetwork, setInitializingNetwork] = useState(false);
+  const [networkStage, setNetworkStage] = useState("");
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -298,6 +302,39 @@ export default function NewInstancePage() {
   }
 
   const sshKeyValid = /^\s*ssh-(ed25519|rsa|dss|ecdsa)\b/.test(sshPublicKey) || /^\s*ecdsa-sha2-\b/.test(sshPublicKey);
+  // 一鍵初始化網路：建立完成後重載建機選項（新的 VCN／子網會自動帶入）
+  async function initializeNetworkNow() {
+    if (!accountId) return;
+    setInitializingNetwork(true);
+    setNetworkStage("");
+    try {
+      const response = await fetch("/api/instances/network/init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, region }),
+      });
+      const result = await readDeploymentStream(response, {
+        onProgress: (label: string, details?: Record<string, unknown>) =>
+          setNetworkStage(typeof details?.message === "string" ? details.message : label),
+        stageLabels: {
+          vcn: "建立 VCN",
+          igw: "建立 Internet Gateway",
+          route: "建立路由表",
+          "security-list": "建立安全清單",
+          subnet: "建立公開子網",
+          done: "完成",
+        },
+      });
+      toast.success(String(result.message || "網路初始化完成"));
+      await loadOptions(accountId, region);
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "初始化網路失敗");
+    } finally {
+      setInitializingNetwork(false);
+      setNetworkStage("");
+    }
+  }
+
   const canSubmit = Boolean(
     accountId
     && region
@@ -571,7 +608,28 @@ export default function NewInstancePage() {
           {/* 網路與存取 */}
           <Card>
             <Card.Content className="grid gap-4 p-6">
-              <h3 className="text-base font-semibold">網路與存取</h3>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-base font-semibold">網路與存取</h3>
+                {(options?.networks?.length ?? 0) === 0 ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    isDisabled={initializingNetwork || optionsLoading || !accountId}
+                    onPress={initializeNetworkNow}
+                  >
+                    {initializingNetwork
+                      ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" />
+                      : <Network aria-hidden size={16} className="mr-2" />}
+                    {initializingNetwork ? (networkStage || "初始化中…") : "一鍵初始化網路"}
+                  </Button>
+                ) : null}
+              </div>
+              {(options?.networks?.length ?? 0) === 0 ? (
+                <p className="text-xs text-muted">
+                  此 compartment 尚無可用的 VCN／子網。按「一鍵初始化網路」自動建立
+                  VCN、Internet Gateway、路由、安全清單（22／80／443）與公開子網。
+                </p>
+              ) : null}
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="grid gap-2">
                   <label htmlFor="new-vcn" className="text-sm font-medium">VCN</label>

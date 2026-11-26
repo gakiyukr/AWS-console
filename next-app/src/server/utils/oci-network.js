@@ -540,3 +540,125 @@ export async function deleteReservedPublicIp(ctx, publicIpId) {
     path: `/20160918/publicIps/${encodeURIComponent(publicIpId)}`,
   });
 }
+
+// ─── 一鍵初始化網路（VCN + IGW + 路由 + 公開子網 + 安全清單） ──────────
+
+/**
+ * 在 compartment 內建立一組可立即開機的網路：
+ * VCN（10.0.0.0/16）→ Internet Gateway → 路由表（0.0.0.0/0 與 ::/0 指向 IGW）
+ * → 公開子網（10.0.0.0/24，啟動時配公網 IP）→ 安全清單（22/80/443 入站）。
+ * 每一步先查詢是否已存在，重複執行不會產生重複資源（冪等）。
+ * @param {{ account: object, privateKeyPem: string }} ctx
+ * @param {{ compartmentOcid: string, name?: string, emit?: (progress: {stage: string, message: string}) => void }} options
+ * @returns {Promise<{ vcnId: string, subnetId: string, securityListId: string, warnings: string[] }>}
+ */
+export async function initializeNetwork(ctx, options) {
+  const { compartmentOcid, name = "console-vcn", emit = () => {} } = options || {};
+  const api = request(ctx);
+  const warnings = [];
+
+  // 1. 既有 VCN（名稱相符且有公開子網）直接沿用
+  emit({ stage: "vcn", message: "檢查既有 VCN…" });
+  const existingVcns = await api({ method: "GET", path: "/20160918/vcns", query: { compartmentId: compartmentOcid } });
+  const reusable = (Array.isArray(existingVcns) ? existingVcns : [])
+    .find(vcn => vcn?.lifecycleState === "AVAILABLE" && vcn?.id);
+  if (reusable) {
+    emit({ stage: "vcn", message: `沿用既有 VCN：${reusable.displayName || reusable.id}` });
+    const subnets = await api({
+      method: "GET",
+      path: "/20160918/subnets",
+      query: { compartmentId: compartmentOcid, vcnId: reusable.id },
+    });
+    const publicSubnet = (Array.isArray(subnets) ? subnets : [])
+      .find(subnet => subnet?.lifecycleState === "AVAILABLE" && !subnet?.prohibitPublicIpOnLaunch);
+    if (publicSubnet) {
+      const { securityListId } = await resolveDefaultSecurityList(api, publicSubnet);
+      return { vcnId: String(reusable.id), subnetId: String(publicSubnet.id), securityListId, warnings };
+    }
+    warnings.push("既有 VCN 沒有可配公網 IP 的子網，已改為新建。");
+  }
+
+  // 2. 建立 VCN
+  emit({ stage: "vcn", message: "建立 VCN（10.0.0.0/16）…" });
+  const vcn = await api({
+    method: "POST",
+    path: "/20160918/vcns",
+    body: {
+      compartmentId: compartmentOcid,
+      displayName: name,
+      cidrBlocks: ["10.0.0.0/16"],
+      dnsLabel: `console${Date.now().toString(36).slice(-6)}`,
+    },
+  });
+  const vcnId = String(vcn?.id || "");
+  if (!vcnId) throw new OciApiError("建立 VCN 失敗（未回傳 OCID）", 502);
+
+  // 3. Internet Gateway
+  emit({ stage: "igw", message: "建立 Internet Gateway…" });
+  const igw = await api({
+    method: "POST",
+    path: "/20160918/internetGateways",
+    body: { compartmentId: compartmentOcid, vcnId, displayName: `${name}-igw`, isEnabled: true },
+  });
+  const igwId = String(igw?.id || "");
+  if (!igwId) throw new OciApiError("建立 Internet Gateway 失敗（未回傳 OCID）", 502);
+
+  // 4. 路由表：v4/v6 預設路由指向 IGW
+  emit({ stage: "route", message: "建立路由表（0.0.0.0/0、::/0 → IGW）…" });
+  const routeTable = await api({
+    method: "POST",
+    path: "/20160918/routeTables",
+    body: {
+      compartmentId: compartmentOcid,
+      vcnId,
+      displayName: `${name}-rt`,
+      routeRules: [
+        { destination: "0.0.0.0/0", destinationType: "CIDR_BLOCK", networkEntityId: igwId },
+        { destination: "::/0", destinationType: "CIDR_BLOCK", networkEntityId: igwId },
+      ],
+    },
+  });
+  const routeTableId = String(routeTable?.id || "");
+
+  // 5. 安全清單：SSH／HTTP／HTTPS 入站，全部出站
+  emit({ stage: "security-list", message: "建立安全清單（22/80/443）…" });
+  const securityList = await api({
+    method: "POST",
+    path: "/20160918/securityLists",
+    body: {
+      compartmentId: compartmentOcid,
+      vcnId,
+      displayName: `${name}-sl`,
+      ingressSecurityRules: [
+        { protocol: "6", source: "0.0.0.0/0", sourceType: "CIDR_BLOCK", tcpOptions: { destinationPortRange: { min: 22, max: 22 } } },
+        { protocol: "6", source: "0.0.0.0/0", sourceType: "CIDR_BLOCK", tcpOptions: { destinationPortRange: { min: 80, max: 80 } } },
+        { protocol: "6", source: "0.0.0.0/0", sourceType: "CIDR_BLOCK", tcpOptions: { destinationPortRange: { min: 443, max: 443 } } },
+      ],
+      egressSecurityRules: [
+        { protocol: "all", destination: "0.0.0.0/0", destinationType: "CIDR_BLOCK" },
+      ],
+    },
+  });
+  const securityListId = String(securityList?.id || "");
+
+  // 6. 公開子網（啟動時自動配公網 IP）
+  emit({ stage: "subnet", message: "建立公開子網（10.0.0.0/24）…" });
+  const subnet = await api({
+    method: "POST",
+    path: "/20160918/subnets",
+    body: {
+      compartmentId: compartmentOcid,
+      vcnId,
+      displayName: `${name}-public`,
+      cidrBlock: "10.0.0.0/24",
+      prohibitPublicIpOnLaunch: false,
+      ...(routeTableId ? { routeTableId } : {}),
+      ...(securityListId ? { securityListIds: [securityListId] } : {}),
+    },
+  });
+  const subnetId = String(subnet?.id || "");
+  if (!subnetId) throw new OciApiError("建立子網失敗（未回傳 OCID）", 502);
+
+  emit({ stage: "done", message: "網路初始化完成" });
+  return { vcnId, subnetId, securityListId, warnings };
+}

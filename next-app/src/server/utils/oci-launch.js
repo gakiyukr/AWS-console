@@ -20,11 +20,19 @@ function request(ctx) {
  * }>}
  */
 // 將 OCI 錯誤加上呼叫的 API 名稱，便於辨識是 AD／shape／VCN 哪一支失敗。
+// 保留原錯誤物件上的 ociCode／statusCode，讓上層 log 能記錄 OCI 原始代碼。
 async function apiWithLabel(api, label, options) {
   try {
     return await api(options);
   } catch (error) {
-    throw new Error(`${label} 失敗：${error instanceof Error ? error.message : String(error)}`);
+    const detail = error instanceof Error ? error.message : String(error);
+    const wrapped = new Error(`${label} 失敗：${detail}`);
+    Object.assign(wrapped, {
+      ociCode: error?.ociCode ?? "",
+      statusCode: error?.statusCode ?? 0,
+      cause: error,
+    });
+    throw wrapped;
   }
 }
 
@@ -35,8 +43,13 @@ export async function listCreateOptions(ctx) {
   // ListShapes 在 root compartment（compartmentId = tenancy OCID）時，
   // 部分租用戶需提供 availabilityDomain 才不會回 NotAuthorizedOrNotFound。
   // 先取 AD 清單，再用第一個 AD 查 shapes（同 region 各 AD 的 shape 集合一致）。
+  // ListAvailabilityDomains 屬於 identity 服務（identity.<region>.oraclecloud.com），
+  // 不是 iaas；送錯服務端點會回 NotAuthorizedOrNotFound。
   const domains = await apiWithLabel(api, "Availability Domains", {
-    method: "GET", path: "/20160918/availabilityDomains", query: { compartmentId },
+    method: "GET",
+    service: "identity",
+    path: "/20160918/availabilityDomains",
+    query: { compartmentId },
   });
   const firstAd = (Array.isArray(domains) ? domains : []).find(item => item?.name)?.name || "";
   const [shapes, vcns] = await Promise.all([

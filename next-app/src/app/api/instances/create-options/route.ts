@@ -39,6 +39,10 @@ export async function GET(request: Request): Promise<Response> {
       stack: error instanceof Error ? error.stack ?? null : null,
     });
     const httpError = toOciAccountHttpError(error);
-    return errorResponse(httpError.status, httpError.status === 500 ? ociFailureMessage(error) : httpError.body.error);
+    // 暫時把 OCI 原始錯誤碼附在訊息尾端，方便從瀏覽器直接看到根因
+    const diagInfo = error as { ociCode?: string, statusCode?: number };
+    const baseMessage = httpError.status === 500 ? ociFailureMessage(error) : httpError.body.error;
+    const suffix = diagInfo?.ociCode ? `（OCI: ${diagInfo.ociCode} / HTTP ${diagInfo.statusCode ?? "-"}）` : "";
+    return errorResponse(httpError.status, `${baseMessage}${suffix}`);
   }
 }

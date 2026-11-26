@@ -19,21 +19,42 @@ function request(ctx) {
  *   }>>,
  * }>}
  */
+// 將 OCI 錯誤加上呼叫的 API 名稱，便於辨識是 AD／shape／VCN 哪一支失敗。
+async function apiWithLabel(api, label, options) {
+  try {
+    return await api(options);
+  } catch (error) {
+    throw new Error(`${label} 失敗：${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export async function listCreateOptions(ctx) {
   const api = request(ctx);
   const compartmentId = ctx.account.compartmentOcid;
 
-  const [domains, shapes, vcns] = await Promise.all([
-    api({ method: "GET", path: "/20160918/availabilityDomains", query: { compartmentId } }),
-    api({ method: "GET", path: "/20160918/shapes", query: { compartmentId } }),
-    api({ method: "GET", path: "/20160918/vcns", query: { compartmentId } }),
+  // ListShapes 在 root compartment（compartmentId = tenancy OCID）時，
+  // 部分租用戶需提供 availabilityDomain 才不會回 NotAuthorizedOrNotFound。
+  // 先取 AD 清單，再用第一個 AD 查 shapes（同 region 各 AD 的 shape 集合一致）。
+  const domains = await apiWithLabel(api, "Availability Domains", {
+    method: "GET", path: "/20160918/availabilityDomains", query: { compartmentId },
+  });
+  const firstAd = (Array.isArray(domains) ? domains : []).find(item => item?.name)?.name || "";
+  const [shapes, vcns] = await Promise.all([
+    apiWithLabel(api, "Shapes", {
+      method: "GET",
+      path: "/20160918/shapes",
+      query: firstAd ? { compartmentId, availabilityDomain: firstAd } : { compartmentId },
+    }),
+    apiWithLabel(api, "VCNs", {
+      method: "GET", path: "/20160918/vcns", query: { compartmentId },
+    }),
   ]);
 
   const availableVcns = (Array.isArray(vcns) ? vcns : [])
     .filter(vcn => vcn?.lifecycleState === "AVAILABLE" && vcn?.id)
     .slice(0, 10);
   const networks = await Promise.all(availableVcns.map(async (vcn) => {
-    const subnets = await api({
+    const subnets = await apiWithLabel(api, `Subnets (${vcn.displayName || vcn.id})`, {
       method: "GET",
       path: "/20160918/subnets",
       query: { compartmentId, vcnId: vcn.id },

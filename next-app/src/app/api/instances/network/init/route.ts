@@ -1,5 +1,5 @@
 // POST /api/instances/network/init：一鍵初始化網路（SSE 進度）。
-// 建立 VCN（10.0.0.0/16）→ Internet Gateway → 路由表（v4/v6 預設路由）
+// 建立 VCN（10.0.0.0/16）→ Internet Gateway → 路由表（0.0.0.0/0 預設路由）
 // → 安全清單（22/80/443 入站）→ 公開子網（10.0.0.0/24）。
 // 既有可用 VCN／公開子網會直接沿用（冪等），不會重複建立資源。
 // body: { accountId?, region? }

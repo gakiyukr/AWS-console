@@ -285,6 +285,14 @@ export default function NewInstancePage() {
   const selectedSubnet = selectedVcn?.subnets.find(subnet => subnet.id === subnetId) || null;
   // 私有子網無法配公網 IP
   const canAssignPublicIp = Boolean(selectedSubnet && !selectedSubnet.prohibitPublicIpOnLaunch);
+  const hasAnyVcn = (options?.networks?.length ?? 0) > 0;
+  const hasAnyPublicSubnet = Boolean(
+    options?.networks?.some(network =>
+      network.subnets.some(subnet => !subnet.prohibitPublicIpOnLaunch),
+    ),
+  );
+  // 選項載入完成後，若本區無任何 VCN 或既有 VCN 皆無可用公開子網，顯示初始化按鈕
+  const showNetworkInit = initializingNetwork || (Boolean(options) && !optionsLoading && !hasAnyPublicSubnet);
   const minBootGB = Math.max(DEFAULT_BOOT_VOLUME_GB, selectedImage?.sizeInGBs ? selectedImage.sizeInGBs + 1 : DEFAULT_BOOT_VOLUME_GB);
 
   function onVcnChange(nextVcnId: string) {
@@ -610,7 +618,7 @@ export default function NewInstancePage() {
             <Card.Content className="grid gap-4 p-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-base font-semibold">網路與存取</h3>
-                {(options?.networks?.length ?? 0) === 0 ? (
+                {showNetworkInit ? (
                   <Button
                     size="sm"
                     variant="secondary"
@@ -624,10 +632,11 @@ export default function NewInstancePage() {
                   </Button>
                 ) : null}
               </div>
-              {(options?.networks?.length ?? 0) === 0 ? (
+              {showNetworkInit ? (
                 <p className="text-xs text-muted">
-                  此 compartment 尚無可用的 VCN／子網。按「一鍵初始化網路」自動建立
-                  VCN、Internet Gateway、路由、安全清單（22／80／443）與公開子網。
+                  {hasAnyVcn
+                    ? "既有 VCN 尚無可配置公網 IP 的公開子網。若需公開連線，按「一鍵初始化網路」建立一組含公開子網的網路。"
+                    : "此 compartment 尚無可用的 VCN／子網。按「一鍵初始化網路」自動建立 VCN、Internet Gateway、路由、安全清單（22／80／443）與公開子網。"}
                 </p>
               ) : null}
               <div className="grid gap-4 sm:grid-cols-2">

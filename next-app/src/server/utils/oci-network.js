@@ -544,10 +544,12 @@ export async function deleteReservedPublicIp(ctx, publicIpId) {
 // ─── 一鍵初始化網路（VCN + IGW + 路由 + 公開子網 + 安全清單） ──────────
 
 /**
- * 在 compartment 內建立一組可立即開機的網路：
- * VCN（10.0.0.0/16）→ Internet Gateway → 路由表（0.0.0.0/0 與 ::/0 指向 IGW）
- * → 公開子網（10.0.0.0/24，啟動時配公網 IP）→ 安全清單（22/80/443 入站）。
- * 每一步先查詢是否已存在，重複執行不會產生重複資源（冪等）。
+ * 在 compartment 內建立一組可立即開機的 IPv4 公開網路：
+ * VCN（10.0.0.0/16）→ Internet Gateway → 路由表（0.0.0.0/0 指向 IGW）
+ * → 安全清單（22/80/443 入站）→ 公開子網（10.0.0.0/24，啟動時配公網 IP）。
+ * IPv6 路由（::/0）不在此預寫，待使用者實際開通 IPv6 時由 enableInstanceIpv6
+ * 補齊，避免 OCI 拒絕在未啟用 IPv6 的 VCN 上建立 ::/0 路由。
+ * 每一步先查詢是否已存在可用公開子網，重複執行不會產生重複資源（冪等）。
  * @param {{ account: object, privateKeyPem: string }} ctx
  * @param {{ compartmentOcid: string, name?: string, emit?: (progress: {stage: string, message: string}) => void }} options
  * @returns {Promise<{ vcnId: string, subnetId: string, securityListId: string, warnings: string[] }>}
@@ -557,25 +559,29 @@ export async function initializeNetwork(ctx, options) {
   const api = request(ctx);
   const warnings = [];
 
-  // 1. 既有 VCN（名稱相符且有公開子網）直接沿用
+  // 1. 檢查既有 AVAILABLE VCN 是否已有可用公開子網；有則直接沿用
   emit({ stage: "vcn", message: "檢查既有 VCN…" });
   const existingVcns = await api({ method: "GET", path: "/20160918/vcns", query: { compartmentId: compartmentOcid } });
-  const reusable = (Array.isArray(existingVcns) ? existingVcns : [])
-    .find(vcn => vcn?.lifecycleState === "AVAILABLE" && vcn?.id);
-  if (reusable) {
-    emit({ stage: "vcn", message: `沿用既有 VCN：${reusable.displayName || reusable.id}` });
-    const subnets = await api({
-      method: "GET",
-      path: "/20160918/subnets",
-      query: { compartmentId: compartmentOcid, vcnId: reusable.id },
-    });
-    const publicSubnet = (Array.isArray(subnets) ? subnets : [])
-      .find(subnet => subnet?.lifecycleState === "AVAILABLE" && !subnet?.prohibitPublicIpOnLaunch);
-    if (publicSubnet) {
-      const { securityListId } = await resolveDefaultSecurityList(api, publicSubnet);
-      return { vcnId: String(reusable.id), subnetId: String(publicSubnet.id), securityListId, warnings };
+  const availableVcns = (Array.isArray(existingVcns) ? existingVcns : [])
+    .filter(vcn => vcn?.lifecycleState === "AVAILABLE" && vcn?.id)
+    .slice(0, 10);
+  if (availableVcns.length > 0) {
+    for (const vcn of availableVcns) {
+      const subnets = await api({
+        method: "GET",
+        path: "/20160918/subnets",
+        query: { compartmentId: compartmentOcid, vcnId: vcn.id },
+      });
+      const publicSubnet = (Array.isArray(subnets) ? subnets : [])
+        .find(subnet => subnet?.lifecycleState === "AVAILABLE" && !subnet?.prohibitPublicIpOnLaunch);
+      if (publicSubnet) {
+        emit({ stage: "vcn", message: `沿用既有 VCN：${vcn.displayName || vcn.id}` });
+        const { securityListId } = await resolveDefaultSecurityList(api, publicSubnet);
+        emit({ stage: "done", message: "已沿用既有公開網路" });
+        return { vcnId: String(vcn.id), subnetId: String(publicSubnet.id), securityListId, warnings };
+      }
     }
-    warnings.push("既有 VCN 沒有可配公網 IP 的子網，已改為新建。");
+    warnings.push("既有 VCN 沒有可配公網 IP 的公開子網，已改為新建。");
   }
 
   // 2. 建立 VCN
@@ -603,8 +609,8 @@ export async function initializeNetwork(ctx, options) {
   const igwId = String(igw?.id || "");
   if (!igwId) throw new OciApiError("建立 Internet Gateway 失敗（未回傳 OCID）", 502);
 
-  // 4. 路由表：v4/v6 預設路由指向 IGW
-  emit({ stage: "route", message: "建立路由表（0.0.0.0/0、::/0 → IGW）…" });
+  // 4. 路由表：IPv4 預設路由指向 IGW（IPv6 路由待開通 IPv6 時由 enableInstanceIpv6 補上）
+  emit({ stage: "route", message: "建立路由表（0.0.0.0/0 → IGW）…" });
   const routeTable = await api({
     method: "POST",
     path: "/20160918/routeTables",
@@ -614,7 +620,6 @@ export async function initializeNetwork(ctx, options) {
       displayName: `${name}-rt`,
       routeRules: [
         { destination: "0.0.0.0/0", destinationType: "CIDR_BLOCK", networkEntityId: igwId },
-        { destination: "::/0", destinationType: "CIDR_BLOCK", networkEntityId: igwId },
       ],
     },
   });

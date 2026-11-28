@@ -5,7 +5,7 @@
 // 送出後為 PROVISIONING 過渡態，總覽頁會自動輪詢到 RUNNING。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Network, Plus } from "lucide-react";
+import { ArrowLeft, Loader2, Network, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "@heroui/react/toast";
 import { Button } from "@heroui/react/button";
@@ -13,6 +13,7 @@ import { Card } from "@heroui/react/card";
 import { Chip } from "@/components/chip";
 import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { readDeploymentStream } from "@/lib/deployment-stream";
+import { sshKeyTypeLabel, type SshPublicKeyOption } from "@/lib/ssh-keys";
 import { CustomSelect } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -98,12 +99,49 @@ export default function NewInstancePage() {
   const [enableIpv6, setEnableIpv6] = useState(false);
   const [sshPublicKey, setSshPublicKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // 公鑰庫（與 AWS 部署頁共用 /api/ssh-keys）
+  const [sshKeys, setSshKeys] = useState<SshPublicKeyOption[]>([]);
+  const [sshKeyMode, setSshKeyMode] = useState<"library" | "manual">("library");
+  const [selectedSshKeyId, setSelectedSshKeyId] = useState<number | null>(null);
+  const [loadingKeys, setLoadingKeys] = useState(false);
+  // 建機進度日誌（與 AWS 部署頁同樣式）
+  const [progressLog, setProgressLog] = useState<Array<{ time: string, message: string, details?: Record<string, unknown> }>>([]);
   // 多區域：訂閱區域清單與目前選定的目標區域
   const [subscribedRegions, setSubscribedRegions] = useState<string[]>([]);
   const [region, setRegion] = useState("");
   // 一鍵初始化網路（VCN／IGW／路由／安全清單／公開子網）
   const [initializingNetwork, setInitializingNetwork] = useState(false);
   const [networkStage, setNetworkStage] = useState("");
+
+  // 載入公鑰庫並預設選第一把（與 AWS 部署頁一致的行為）
+  const loadSshKeys = useCallback(async () => {
+    setLoadingKeys(true);
+    try {
+      const response = await fetch("/api/ssh-keys");
+      if (!response.ok) throw new Error(await readError(response));
+      const payload = await readJson<{ keys: SshPublicKeyOption[] }>(response);
+      const keys = payload.keys || [];
+      setSshKeys(keys);
+      if (keys.length > 0) {
+        setSshKeyMode("library");
+        setSelectedSshKeyId(previous => {
+          const stillExists = keys.some(key => key.id === previous);
+          const next = stillExists ? previous : keys[0].id;
+          setSshPublicKey(keys.find(key => key.id === next)?.publicKey || "");
+          return next;
+        });
+      } else {
+        // 公鑰庫為空時改用貼上模式，避免使用者找不到輸入框
+        setSshKeyMode("manual");
+        setSelectedSshKeyId(null);
+      }
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "載入公鑰庫失敗");
+      setSshKeyMode("manual");
+    } finally {
+      setLoadingKeys(false);
+    }
+  }, []);
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -209,6 +247,7 @@ export default function NewInstancePage() {
   useEffect(() => {
     let cancelled = false;
     async function init() {
+      void loadSshKeys();
       const loaded = await loadAccounts();
       if (cancelled) return;
       const firstAccount = loaded[0];
@@ -361,7 +400,16 @@ export default function NewInstancePage() {
     event.preventDefault();
     if (!canSubmit) return;
     setSubmitting(true);
+    setProgressLog([]);
+    appendLog("開始建立執行個體", {
+      account: accounts.find(item => String(item.id) === accountId)?.name || accountId,
+      region,
+      shape,
+      image: selectedImage?.displayName || effectiveImageId,
+      availabilityDomain: ad,
+    });
     try {
+      appendLog(`送出 LaunchInstance（${shape}）…`);
       const response = await fetch("/api/instances/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -380,14 +428,43 @@ export default function NewInstancePage() {
           sshPublicKey,
         }),
       });
-      if (!response.ok) throw new Error(await readError(response));
-      const payload = await readJson<{ message?: string }>(response);
+      if (!response.ok) {
+        const message = await readError(response);
+        appendLog("建立失敗", { error: message });
+        throw new Error(message);
+      }
+      const payload = await readJson<{
+        message?: string,
+        instanceId?: string,
+        lifecycleState?: string,
+        region?: string,
+        ipv6Address?: string | null,
+        ipv6Warning?: string,
+      }>(response);
+      appendLog(`執行個體已建立：${payload.instanceId || "（未回傳 OCID）"}`, {
+        lifecycleState: payload.lifecycleState || null,
+        region: payload.region || region,
+        ...(payload.ipv6Address ? { ipv6Address: payload.ipv6Address } : {}),
+      });
+      if (payload.ipv6Warning) {
+        appendLog("IPv6 開通警告", { warning: payload.ipv6Warning });
+      }
+      appendLog("完成，即將返回清單頁");
       toast.success(payload.message || "建立已送出");
       router.push("/instances");
     } catch (error) {
+      appendLog("流程中止", { error: error instanceof Error ? error.message : String(error) });
       toastDanger(error instanceof Error ? error.message : "建立執行個體失敗");
       setSubmitting(false);
     }
+  }
+
+  /** 追加一筆建機進度（與 AWS 部署頁同樣式）。 */
+  function appendLog(message: string, details?: Record<string, unknown>) {
+    setProgressLog(previous => [
+      ...previous,
+      { time: new Date().toLocaleTimeString("zh-TW"), message, ...(details ? { details } : {}) },
+    ]);
   }
 
 
@@ -414,6 +491,7 @@ export default function NewInstancePage() {
           </Card.Content>
         </Card>
       ) : (
+        <>
         <form className="grid gap-4" onSubmit={submit}>
           {/* 基本設定 */}
           <Card>
@@ -697,18 +775,57 @@ export default function NewInstancePage() {
                     disabled={submitting}
                   />
                 </div>
-                <div className="grid gap-2 sm:col-span-2">
-                  <Label htmlFor="new-ssh" className="text-sm font-medium">SSH 公鑰</Label>
-                  <Textarea
-                    id="new-ssh"
-                    className="min-h-24 font-mono text-xs"
-                    spellCheck={false}
-                    placeholder={"ssh-ed25519 AAAA… user@host"}
-                    value={sshPublicKey}
-                    onChange={event => setSshPublicKey(event.target.value)}
-                    disabled={submitting}
-                  />
-                  <p className="text-xs text-muted">OpenSSH 格式（ssh-ed25519 / ssh-rsa 開頭）；會寫入主機的 authorized_keys。</p>
+                <div className="grid gap-3 sm:col-span-2">
+                  <div className="grid gap-2">
+                    <label htmlFor="new-ssh-key-id" className="text-sm font-medium">從公鑰庫選擇</label>
+                    <CustomSelect
+                      id="new-ssh-key-id"
+                      value={sshKeyMode === "library" ? String(selectedSshKeyId ?? "") : ""}
+                      placeholder={loadingKeys ? "載入中..." : "請選擇已儲存的公鑰"}
+                      disabled={loadingKeys || submitting}
+                      options={sshKeys.map(key => ({
+                        value: String(key.id),
+                        label: `${key.label}（${sshKeyTypeLabel(key.publicKey)}）`,
+                      }))}
+                      onChange={val => {
+                        setSshKeyMode("library");
+                        setSelectedSshKeyId(val ? Number(val) : null);
+                        const picked = sshKeys.find(key => String(key.id) === val);
+                        setSshPublicKey(picked?.publicKey || "");
+                      }}
+                    />
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        className={sshKeyMode === "manual" ? "underline underline-offset-4" : "text-muted hover:text-foreground"}
+                        onClick={() => { setSshKeyMode("manual"); setSelectedSshKeyId(null); }}
+                      >
+                        或手動貼上公鑰
+                      </button>
+                      {!loadingKeys && sshKeys.length === 0 ? (
+                        <span className="text-muted">（尚無公鑰，請先到設定頁新增）</span>
+                      ) : null}
+                    </div>
+                  </div>
+                  {sshKeyMode === "manual" ? (
+                    <div className="grid gap-2">
+                      <Label htmlFor="new-ssh" className="text-sm font-medium">SSH 公鑰</Label>
+                      <Textarea
+                        id="new-ssh"
+                        className="min-h-24 font-mono text-xs"
+                        spellCheck={false}
+                        placeholder={"ssh-ed25519 AAAA… user@host"}
+                        value={sshPublicKey}
+                        onChange={event => setSshPublicKey(event.target.value)}
+                        disabled={submitting}
+                      />
+                      <p className="text-xs text-muted">OpenSSH 格式（ssh-ed25519 / ssh-rsa 開頭）；會寫入主機的 authorized_keys。</p>
+                    </div>
+                  ) : sshPublicKey ? (
+                    <p className="text-xs text-muted">
+                      將使用：<span className="font-mono">{sshPublicKey.trim().split(/\s+/).slice(0, 2).join(" ").slice(0, 72)}…</span>
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </Card.Content>
@@ -724,6 +841,48 @@ export default function NewInstancePage() {
             </Button>
           </div>
         </form>
+
+        {/* 建機進度日誌（與 AWS 部署頁同樣式） */}
+        <Card>
+          <Card.Content className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold">建立進度</h3>
+                <p className="text-sm text-muted">送出後的每一步都會即時記錄於此</p>
+              </div>
+              <Button
+                variant="ghost"
+                aria-label="清空進度"
+                isDisabled={progressLog.length === 0 || submitting}
+                onPress={() => setProgressLog([])}
+              >
+                <Trash2 aria-hidden size={16} />
+              </Button>
+            </div>
+            {progressLog.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted">尚未執行建立流程</div>
+            ) : (
+              <div className="mt-4 h-72 overflow-y-auto rounded-md border">
+                <div className="divide-y">
+                  {progressLog.map((entry, index) => (
+                    <div key={index} className="p-3 text-sm">
+                      <div className="flex gap-2">
+                        <span className="shrink-0 font-mono text-xs text-muted">{entry.time}</span>
+                        <span>{entry.message}</span>
+                      </div>
+                      {entry.details ? (
+                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-muted">
+                          {JSON.stringify(entry.details, null, 2)}
+                        </pre>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card.Content>
+        </Card>
+        </>
       )}
     </div>
   );

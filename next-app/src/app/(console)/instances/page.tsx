@@ -102,6 +102,9 @@ export default function InstancesPage() {
   // 電源操作後輪詢中的執行個體 OCID 集合
   const [pollingIds, setPollingIds] = useState<Set<string>>(new Set());
   const pollingIdsRef = useRef<Set<string>>(new Set());
+  // 單台「重新整理狀態」中的 OCID 集合
+  const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
+  const refreshingIdsRef = useRef<Set<string>>(new Set());
   const [pendingPower, setPendingPower] = useState<{ instance: InstanceRow, action: PendingPowerAction } | null>(null);
   const [powerSubmitting, setPowerSubmitting] = useState(false);
   const [stopForce, setStopForce] = useState(false);
@@ -266,6 +269,40 @@ export default function InstancesPage() {
     pollTimersRef.current.set(instanceId, timer);
   }
   pollInstanceStatusRef.current = pollInstanceStatus;
+
+  // 單台重新整理：立即向 OCI 取最新狀態與 IP，不動其他列
+  async function refreshInstanceRow(instance: InstanceRow) {
+    if (refreshingIdsRef.current.has(instance.id)) return;
+    refreshingIdsRef.current.add(instance.id);
+    setRefreshingIds(previous => new Set(previous).add(instance.id));
+    try {
+      const params = new URLSearchParams();
+      if (accountId) params.set("account_id", accountId);
+      if (instance.region) params.set("region", instance.region);
+      const qs = params.toString();
+      const response = await fetch(`/api/instances/${encodeURIComponent(instance.id)}${qs ? `?${qs}` : ""}`);
+      if (!response.ok) throw new Error(await readError(response));
+      const payload = await readJson<{ instance: { lifecycleState: string, displayName?: string, shape?: string, availabilityDomain?: string } }>(response);
+      setInstances(previous => previous.map(row => row.id === instance.id
+        ? {
+          ...row,
+          lifecycleState: payload.instance.lifecycleState,
+          displayName: payload.instance.displayName || row.displayName,
+          shape: payload.instance.shape || row.shape,
+          availabilityDomain: payload.instance.availabilityDomain || row.availabilityDomain,
+        }
+        : row));
+    } catch (error) {
+      toastDanger(error instanceof Error ? error.message : "重新整理狀態失敗");
+    } finally {
+      refreshingIdsRef.current.delete(instance.id);
+      setRefreshingIds(previous => {
+        const next = new Set(previous);
+        next.delete(instance.id);
+        return next;
+      });
+    }
+  }
 
   async function submitPowerAction() {
     if (!pendingPower) return;
@@ -555,6 +592,15 @@ export default function InstancesPage() {
                                 <Table.Cell><span className="font-mono text-xs">{row.ipv6Address || "—"}</span></Table.Cell>
                                 <Table.Cell>
                                   <div className="flex flex-wrap gap-1">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      aria-label="重新整理狀態"
+                                      isDisabled={busy || refreshingIds.has(row.id)}
+                                      onPress={() => void refreshInstanceRow(row)}
+                                    >
+                                      <RefreshCw aria-hidden size={14} className={refreshingIds.has(row.id) ? "animate-spin" : ""} />
+                                    </Button>
                                     <Button
                                       size="sm"
                                       variant="secondary"

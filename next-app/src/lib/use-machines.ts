@@ -25,7 +25,6 @@ export function useMachines(platform: Platform) {
   const [actionPendingId, setActionPendingId] = useState<number | null>(null);
   const [rebootIpPending, setRebootIpPending] = useState(false);
   const [ipv6Pending, setIpv6Pending] = useState(false);
-  const [removing, setRemoving] = useState(false);
 
   // 確認對話框：目標與開關分離保存，關閉動畫期間仍能顯示內容
   const [stopTarget, setStopTarget] = useState<MachineRow | null>(null);
@@ -39,8 +38,6 @@ export function useMachines(platform: Platform) {
   const [terminateOpen, setTerminateOpen] = useState(false);
   const [ipv6Target, setIpv6Target] = useState<MachineRow | null>(null);
   const [ipv6Open, setIpv6Open] = useState(false);
-  const [removeTarget, setRemoveTarget] = useState<MachineRow | null>(null);
-  const [removeOpen, setRemoveOpen] = useState(false);
 
   const loadMachines = useCallback(async () => {
     try {
@@ -134,11 +131,6 @@ export function useMachines(platform: Platform) {
     setIpv6Open(true);
   }
 
-  function requestRemove(machine: MachineRow) {
-    setRemoveTarget(machine);
-    setRemoveOpen(true);
-  }
-
 
   async function confirmStop() {
     const machine = stopTarget;
@@ -210,24 +202,6 @@ export function useMachines(platform: Platform) {
     }
   }
 
-  async function confirmRemove() {
-    const machine = removeTarget;
-    if (!machine || removing) return;
-    setRemoving(true);
-    try {
-      const response = await fetch(`/api/machines/${machine.id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error(await readError(response));
-      toast.success("機器已從清單移除");
-      setRemoveOpen(false);
-      setRemoveTarget(null);
-      await loadMachines();
-    } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "移除失敗");
-    } finally {
-      setRemoving(false);
-    }
-  }
-
   return {
     machines,
     loading,
@@ -235,7 +209,6 @@ export function useMachines(platform: Platform) {
     actionPendingId,
     rebootIpPending,
     ipv6Pending,
-    removing,
     busyPending: rebootIpPending || ipv6Pending,
     loadMachines,
     refresh,
@@ -246,7 +219,6 @@ export function useMachines(platform: Platform) {
       onRebootIp: requestRebootIp,
       onIpv6: requestIpv6,
       onTerminate: requestTerminate,
-      onRemove: requestRemove,
     },
     dialogs: {
       stop: { target: stopTarget, open: stopOpen, setOpen: setStopOpen, confirm: confirmStop },
@@ -262,7 +234,6 @@ export function useMachines(platform: Platform) {
         setIncludeIpv6: setRebootIpIncludeIpv6,
       },
       ipv6: { target: ipv6Target, open: ipv6Open, setOpen: setIpv6Open, confirm: confirmIpv6, pending: ipv6Pending },
-      remove: { target: removeTarget, open: removeOpen, setOpen: setRemoveOpen, confirm: confirmRemove, pending: removing },
     },
   };
 }

@@ -34,7 +34,6 @@ export interface MachineTableActions {
   onRebootIp: (machine: MachineRow) => void
   onIpv6: (machine: MachineRow) => void
   onTerminate: (machine: MachineRow) => void
-  onRemove: (machine: MachineRow) => void
 }
 
 interface MachineTableProps {
@@ -247,14 +246,6 @@ export function MachineTable({
                         onPress={() => actions.onTerminate(machine)}
                       >
                         終止
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        isDisabled={actionPendingId === machine.id}
-                        onPress={() => actions.onRemove(machine)}
-                      >
-                        移除
                       </Button>
                     </div>
                   </Table.Cell>

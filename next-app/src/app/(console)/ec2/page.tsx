@@ -1,57 +1,18 @@
 'use client'
 
-// EC2 機器總覽：D1 清單 × DescribeInstances 即時狀態。電源操作與移除
-// 先經確認對話框；新增機器以「帳號 → Region → 執行個體」三層下拉由
-// 後端即時列出候選，或直接前往「新增 EC2」部署一台新機。
+// EC2 機器總覽：D1 清單 × DescribeInstances 即時狀態。
+// 電源操作先經確認對話框；新增機器一律走「新增 EC2」部署流程。
 import Link from "next/link";
-import { useState } from "react";
-import { Loader2, Plus, RefreshCw, Server } from "lucide-react";
-import { toast } from "@heroui/react/toast";
+import { Loader2, RefreshCw, Server } from "lucide-react";
 import { Button } from "@heroui/react/button";
 import { Card } from "@heroui/react/card";
-import { Input } from "@heroui/react/input";
-import { Modal } from "@heroui/react/modal";
 import { ConfirmDialog, MachineName } from "@/components/confirm-dialog";
 import { MachineTable } from "@/components/machine-table";
-import { readError, readJson, toastDanger } from "@/lib/api-client";
 import { useMachines } from "@/lib/use-machines";
-import { CustomSelect } from "@/components/ui/select";
-
-interface AwsAccountOption {
-  id: number
-  name: string
-  enabled: boolean
-  isDefault: boolean
-}
-
-interface InstanceOption {
-  instanceId: string
-  name: string
-  state: string
-  isWavelength: boolean
-}
-
-const EMPTY_ADD_FORM = {
-  awsAccountId: null as number | null,
-  region: "",
-  instanceId: "",
-  name: "",
-  isWavelength: false,
-};
 
 export default function Ec2OverviewPage() {
   const { machines, loading, refreshing, actionPendingId, busyPending, refresh, actions, dialogs } =
     useMachines("ec2");
-
-  // ── 新增機器（從既有 AWS 執行個體挑選） ────────────────────
-  const [addOpen, setAddOpen] = useState(false);
-  const [addForm, setAddForm] = useState(EMPTY_ADD_FORM);
-  const [adding, setAdding] = useState(false);
-  const [accounts, setAccounts] = useState<AwsAccountOption[]>([]);
-  const [regions, setRegions] = useState<string[]>([]);
-  const [instances, setInstances] = useState<InstanceOption[]>([]);
-  const [loadingRegions, setLoadingRegions] = useState(false);
-  const [loadingInstances, setLoadingInstances] = useState(false);
 
   const stats = {
     running: machines.filter(machine => machine.state === "running").length,
@@ -59,78 +20,6 @@ export default function Ec2OverviewPage() {
     wavelength: machines.filter(machine => machine.isWavelength).length,
     regions: new Set(machines.map(machine => machine.region)).size,
   };
-
-  async function openAddDialog() {
-    setAddForm(EMPTY_ADD_FORM);
-    setRegions([]);
-    setInstances([]);
-    setAddOpen(true);
-    try {
-      const response = await fetch("/api/accounts");
-      if (!response.ok) throw new Error(await readError(response));
-      const payload = await readJson<{ accounts?: AwsAccountOption[] }>(response);
-      const enabled = (payload.accounts || []).filter(account => account.enabled);
-      setAccounts(enabled);
-      const preferred = enabled.find(account => account.isDefault) || enabled[0];
-      if (preferred) {
-        setAddForm(previous => ({ ...previous, awsAccountId: preferred.id }));
-        await loadRegions(preferred.id);
-      }
-    } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "載入帳號失敗");
-    }
-  }
-
-  async function loadRegions(accountId: number) {
-    setLoadingRegions(true);
-    try {
-      // 讀帳號的區域快取；快取為空會自動回填
-      const response = await fetch(`/api/accounts/${accountId}/regions/cache?platform=ec2`);
-      if (!response.ok) throw new Error(await readError(response));
-      const payload = await readJson<{ regions?: string[] }>(response);
-      setRegions(payload.regions || []);
-    } catch {
-      toastDanger("載入地區失敗");
-    } finally {
-      setLoadingRegions(false);
-    }
-  }
-
-  async function loadInstances(accountId: number, region: string) {
-    if (!region) return;
-    setLoadingInstances(true);
-    try {
-      const response = await fetch(
-        `/api/ec2/instances?account_id=${accountId}&region=${encodeURIComponent(region)}`,
-      );
-      if (!response.ok) throw new Error(await readError(response));
-      const payload = await readJson<{ instances?: InstanceOption[] }>(response);
-      setInstances(Array.isArray(payload.instances) ? payload.instances : []);
-    } catch {
-      toastDanger("載入執行個體失敗");
-    } finally {
-      setLoadingInstances(false);
-    }
-  }
-
-  async function submitAdd() {
-    setAdding(true);
-    try {
-      const response = await fetch("/api/machines", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...addForm, platform: "ec2" }),
-      });
-      if (!response.ok) throw new Error(await readError(response));
-      toast.success("機器已新增");
-      setAddOpen(false);
-      await refresh();
-    } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "新增失敗");
-    } finally {
-      setAdding(false);
-    }
-  }
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -140,10 +29,6 @@ export default function Ec2OverviewPage() {
           <p className="text-sm text-muted">管理 EC2 執行個體的電源狀態與網路設定</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onPress={openAddDialog}>
-            <Plus aria-hidden size={16} />
-            加入既有機器
-          </Button>
           <Link
             href="/ec2/new"
             className="inline-flex h-8 items-center gap-2 rounded-md bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] transition-opacity hover:opacity-90"
@@ -189,93 +74,6 @@ export default function Ec2OverviewPage() {
           />
         </Card.Content>
       </Card>
-
-      {/* 加入既有機器 */}
-      <Modal.Root isOpen={addOpen} onOpenChange={setAddOpen}>
-        <Modal.Backdrop>
-          <Modal.Container size="md">
-            <Modal.Dialog>
-              <Modal.Header>
-                <Modal.Heading>加入既有 EC2 機器</Modal.Heading>
-              </Modal.Header>
-              <Modal.Body className="grid gap-4">
-                <div className="grid gap-2">
-                  <label htmlFor="add-account" className="text-sm font-medium">AWS 帳號</label>
-                  <CustomSelect
-                    id="add-account"
-                    value={addForm.awsAccountId}
-                    placeholder="請選擇 AWS 帳號"
-                    options={accounts.map(account => ({
-                      value: String(account.id),
-                      label: `${account.name}${account.isDefault ? "（預設）" : ""}`,
-                    }))}
-                    onChange={val => {
-                      const accountId = Number(val);
-                      setAddForm({ ...EMPTY_ADD_FORM, awsAccountId: accountId });
-                      setInstances([]);
-                      void loadRegions(accountId);
-                    }}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <label htmlFor="add-region" className="text-sm font-medium">地區</label>
-                  <CustomSelect
-                    id="add-region"
-                    value={addForm.region}
-                    placeholder={loadingRegions ? "載入地區中..." : "請選擇地區"}
-                    disabled={loadingRegions || !addForm.awsAccountId}
-                    options={regions.map(region => ({ value: region, label: region }))}
-                    onChange={region => {
-                      setAddForm(previous => ({ ...previous, region, instanceId: "" }));
-                      if (addForm.awsAccountId) void loadInstances(addForm.awsAccountId, region);
-                    }}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <label htmlFor="add-instance" className="text-sm font-medium">執行個體</label>
-                  <CustomSelect
-                    id="add-instance"
-                    value={addForm.instanceId}
-                    placeholder={loadingInstances ? "載入中…" : (instances.length === 0 ? "無可用執行個體" : "請選擇執行個體")}
-                    disabled={loadingInstances || instances.length === 0}
-                    options={instances.map(instance => ({
-                      value: instance.instanceId,
-                      label: `${instance.name || instance.instanceId}（${instance.state}）${instance.isWavelength ? " [WL]" : ""}`,
-                    }))}
-                    onChange={val => {
-                      const selected = instances.find(item => item.instanceId === val);
-                      setAddForm(previous => ({
-                        ...previous,
-                        instanceId: val,
-                        name: selected?.name || val,
-                        isWavelength: Boolean(selected?.isWavelength),
-                      }));
-                    }}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <label htmlFor="add-name" className="text-sm font-medium">顯示名稱</label>
-                  <Input
-                    id="add-name"
-                    value={addForm.name}
-                    onChange={event => setAddForm(previous => ({ ...previous, name: event.target.value }))}
-                  />
-                </div>
-              </Modal.Body>
-              <Modal.Footer>
-                <Button variant="secondary" onPress={() => setAddOpen(false)}>取消</Button>
-                <Button
-                  isDisabled={adding || !addForm.awsAccountId || !addForm.region || !addForm.instanceId || !addForm.name}
-                  onPress={submitAdd}
-                >
-                  {adding ? <Loader2 aria-hidden size={16} className="mr-2 animate-spin" /> : null}
-                  加入
-                </Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal.Root>
 
       {/* 確認對話框 */}
       <ConfirmDialog
@@ -356,17 +154,6 @@ export default function Ec2OverviewPage() {
       </ConfirmDialog>
 
 
-      <ConfirmDialog
-        open={dialogs.remove.open}
-        onOpenChange={dialogs.remove.setOpen}
-        title="移除機器"
-        confirmLabel="移除"
-        danger
-        pending={dialogs.remove.pending}
-        onConfirm={dialogs.remove.confirm}
-      >
-        確定要將 <MachineName machine={dialogs.remove.target} /> 從清單移除嗎？只會移除清單記錄，AWS 上的執行個體不受影響。
-      </ConfirmDialog>
     </div>
   );
 }

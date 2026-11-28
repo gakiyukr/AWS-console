@@ -315,17 +315,6 @@ export default function LightsailOverviewPage() {
         Lightsail 會自動指派 IPv6 位址並開放 IPv6 防火牆，不需要重新開機。
       </ConfirmDialog>
 
-      <ConfirmDialog
-        open={dialogs.remove.open}
-        onOpenChange={dialogs.remove.setOpen}
-        title="移除機器"
-        confirmLabel="移除"
-        danger
-        pending={dialogs.remove.pending}
-        onConfirm={dialogs.remove.confirm}
-      >
-        確定要將 <MachineName machine={dialogs.remove.target} /> 從清單移除嗎？只會移除清單記錄，AWS 上的執行個體不受影響。
-      </ConfirmDialog>
     </div>
   );
 }

@@ -18,8 +18,8 @@ export async function POST(request: Request): Promise<Response> {
   if (!PROTOCOLS.includes(protocol)) {
     return errorResponse(400, "協定須為 http、https 或 socks5。");
   }
-  if (!host) {
-    return errorResponse(400, "請輸入代理伺服器地址（Host）。");
+  if (!host || host.length > 253 || /[\s@/?#\\]/.test(host) || [...host].some(ch => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f)) {
+    return errorResponse(400, "代理伺服器地址（Host）格式無效。");
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     return errorResponse(400, "代理端口必須介於 1 到 65535 之間。");

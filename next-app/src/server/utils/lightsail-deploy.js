@@ -3,8 +3,9 @@
 //   - 無需管理 VPC、Subnet、Security Group（Lightsail 自動建立）
 //   - 使用 Blueprint（作業系統映像）與 Bundle（規格方案）
 //   - 內建靜態 IP 分配與防火牆規則管理
-import { AwsRequestError, encodeLightsailUserData, lightsailQuery } from "./aws-lightsail.js";
-import { listEc2Regions } from "./wavelength.js";
+import { AwsRequestError, lightsailQuery } from "./aws-lightsail.js";
+import { bytesToBase64 } from "./bytes.js";
+import { listEc2Regions, resolveDeployCredential } from "./wavelength.js";
 
 /** @typedef {(stage: string, details?: Record<string, unknown>) => void} ProgressReporter */
 
@@ -110,22 +111,49 @@ async function waitForInstanceRunning(awsEnv, region, instanceName, onProgress) 
 }
 
 /**
- * 產生 cloud-init user data：設定 root 登入憑證（SSH 公鑰或密碼）。
+ * 將傳入的憑證物件正規化並以共用規則驗證（相容 keys 陣列與單一 publicKey 欄位）。
+ * @param {object} rawCredential
+ * @returns {{ type: "ssh_key", keys: string[] } | { type: "password", password: string }}
  */
-function generateCloudInitUserData(credential) {
+function normalizeLightsailCredential(rawCredential) {
+  const input = rawCredential && typeof rawCredential === "object" ? rawCredential : {};
+  const normalized = input.type === "ssh_key" && !Array.isArray(input.keys) && typeof input.publicKey === "string"
+    ? { type: "ssh_key", keys: [input.publicKey] }
+    : input;
+  return resolveDeployCredential({ credential: normalized });
+}
+
+/**
+ * 產生 Lightsail 啟動腳本（明文 shell script）：設定 root 登入憑證。
+ * 依據 AWS Lightsail CreateInstances API 規範，userData 為明文字串（不可 Base64 包裝）；
+ * 內部將公鑰與密碼以 Base64 輸送再解碼，完全杜絕單引號、反斜線或 shell 變數展開注入。
+ */
+export function generateCloudInitUserData(rawCredential) {
+  const credential = normalizeLightsailCredential(rawCredential);
   const lines = ["#!/bin/bash", "set -e"];
 
   if (credential.type === "ssh_key") {
+    const keysPayload = bytesToBase64(new TextEncoder().encode(`${credential.keys.join("\n")}\n`));
     lines.push(
       "mkdir -p /root/.ssh",
       "chmod 700 /root/.ssh",
-      `echo '${credential.publicKey}' >> /root/.ssh/authorized_keys`,
+      `printf '%s' '${keysPayload}' | base64 -d >> /root/.ssh/authorized_keys`,
       "chmod 600 /root/.ssh/authorized_keys",
       "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config",
-      "systemctl reload sshd || service ssh reload || true",
+      "sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config",
+      "if [ -d /etc/ssh/sshd_config.d ]; then printf 'PermitRootLogin prohibit-password\\nPasswordAuthentication no\\n' > /etc/ssh/sshd_config.d/99-console-auth.conf; fi",
+      "systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || service sshd reload 2>/dev/null || service ssh reload 2>/dev/null || true",
     );
-  } else if (credential.type === "password") {
-    lines.push(`echo 'root:${credential.password}' | chpasswd`);
+  } else {
+    const chpasswdPayload = bytesToBase64(new TextEncoder().encode(`root:${credential.password}\n`));
+    lines.push(
+      `printf '%s' '${chpasswdPayload}' | base64 -d | chpasswd`,
+      "passwd -u root 2>/dev/null || true",
+      "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config",
+      "sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config",
+      "if [ -d /etc/ssh/sshd_config.d ]; then printf 'PermitRootLogin yes\\nPasswordAuthentication yes\\n' > /etc/ssh/sshd_config.d/99-console-auth.conf; fi",
+      "systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || service sshd restart 2>/dev/null || service ssh restart 2>/dev/null || true",
+    );
   }
 
   return lines.join("\n");
@@ -139,15 +167,15 @@ function generateCloudInitUserData(credential) {
  * @returns {Promise<object>} 部署結果
  */
 export async function deployLightsailInstance(awsEnv, body, onProgress) {
-  const { region, blueprint_id, bundle_id, instance_name, credential } = body;
+  const { region, blueprint_id, bundle_id, instance_name } = body;
+  const credential = normalizeLightsailCredential(body?.credential);
   // 選用旗標：沿用寬鬆解析（JSON 布林或字串），不進路由欄位白名單
   const isIpv6Enabled = body?.ipv6 === true || body?.ipv6 === "true";
 
   onProgress("validating", { region, blueprintId: blueprint_id, bundleId: bundle_id });
 
-  // 產生 cloud-init user data
+  // 產生明文啟動腳本（AWS Lightsail CreateInstances 的 userData 必須為明文字串）
   const userData = generateCloudInitUserData(credential);
-  const encodedUserData = encodeLightsailUserData(userData);
 
   // 建立執行個體
   onProgress("launching_instance", { instanceName: instance_name });
@@ -158,7 +186,7 @@ export async function deployLightsailInstance(awsEnv, body, onProgress) {
       availabilityZone: `${region}a`, // 預設使用第一個 AZ
       blueprintId: blueprint_id,
       bundleId: bundle_id,
-      userData: encodedUserData,
+      userData,
       // ipAddressType：ipv4 或 dualstack（IPv6）；由部署表單的 IPv6 選項決定
       ipAddressType: isIpv6Enabled ? "dualstack" : "ipv4",
       tags: [
@@ -177,10 +205,11 @@ export async function deployLightsailInstance(awsEnv, body, onProgress) {
 
   // 等待執行個體進入 running
   const instance = await waitForInstanceRunning(awsEnv, region, instance_name, onProgress);
+  let publicIpAddress = String(instance.publicIpAddress || "");
 
   onProgress("instance_running", {
     instanceName: instance_name,
-    publicIpAddress: instance.publicIpAddress,
+    publicIpAddress,
   });
 
   // 分配靜態 IP（Lightsail 的靜態 IP 可在執行個體關機後保留）
@@ -204,7 +233,14 @@ export async function deployLightsailInstance(awsEnv, body, onProgress) {
       instanceName: instance_name,
     });
 
-    onProgress("static_ip_attached", { staticIpName, staticIpAddress: instance.publicIpAddress });
+    // 附加靜態 IP 後，執行個體對外 IP 已變更為靜態 IP，必須重新查詢取得新位址
+    const probe = await lightsailQuery(region, awsEnv, "GetStaticIp", { staticIpName });
+    const attachedIp = String(probe?.staticIp?.ipAddress || "");
+    if (attachedIp) {
+      publicIpAddress = attachedIp;
+    }
+
+    onProgress("static_ip_attached", { staticIpName, staticIpAddress: publicIpAddress });
   } catch (error) {
     // 靜態 IP 分配失敗不中斷流程，使用動態 IP
     onProgress("static_ip_skipped", {
@@ -240,9 +276,9 @@ export async function deployLightsailInstance(awsEnv, body, onProgress) {
     region,
     blueprint_id,
     bundle_id,
-    public_ip_address: instance.publicIpAddress,
+    public_ip_address: publicIpAddress,
     ipv6_address: ipv6Addresses[0] || "",
-    ip_address_type: instance.ipAddressType || "dualstack",
+    ip_address_type: instance.ipAddressType || (isIpv6Enabled ? "dualstack" : "ipv4"),
     static_ip_name: staticIp,
     username: "root",
     credential_type: credential.type,

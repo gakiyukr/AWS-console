@@ -196,7 +196,7 @@ export async function ensureEniIpv6SgRules(env, region, securityGroupIds) {
   for (const securityGroupId of securityGroupIds) {
     try {
       await ec2Query(region, env, "AuthorizeSecurityGroupIngress", {
-        "GroupId.1": securityGroupId,
+        GroupId: securityGroupId,
         "IpPermissions.1.IpProtocol": "-1",
         "IpPermissions.1.Ipv6Ranges.1.CidrIpv6": "::/0",
       });

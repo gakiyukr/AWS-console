@@ -362,38 +362,34 @@ export default function ReservedIpsPage() {
 
       <Card>
         <Card.Content className="p-0">
-          <NoSsr fallback={<div className="p-8 text-center text-sm text-muted">載入中…</div>}>
-            <Table.Root aria-label="保留 IP 清單表格">
-              <Table.ScrollContainer>
-                <Table.Content>
-                  <Table.Header>
-                    <Table.Column isRowHeader>IP 位址</Table.Column>
-                    <Table.Column>名稱</Table.Column>
-                    <Table.Column>區域</Table.Column>
-                    <Table.Column>狀態</Table.Column>
-                    <Table.Column>指派目標 (Private IP)</Table.Column>
-                    <Table.Column>建立時間</Table.Column>
-                    <Table.Column className="text-right">操作</Table.Column>
-                  </Table.Header>
-                  <Table.Body>
-                    {loading ? (
-                      <Table.Row>
-                        <Table.Cell colSpan={7} className="py-8 text-center text-sm text-muted">
-                          <Loader2 aria-hidden size={20} className="mx-auto animate-spin" />
-                          <p className="mt-2">正在載入保留 IP 清單…</p>
-                        </Table.Cell>
-                      </Table.Row>
-                    ) : ips.length === 0 ? (
-                      <Table.Row>
-                        <Table.Cell colSpan={7} className="py-8 text-center text-sm text-muted">
-                          此 Compartment 內尚未配置保留公網 IP。
-                        </Table.Cell>
-                      </Table.Row>
-                    ) : (
-                      ips.map(row => {
+          {loading ? (
+            <div className="py-12 text-center text-sm text-muted">
+              <Loader2 aria-hidden size={20} className="mx-auto animate-spin" />
+              <p className="mt-2">正在載入保留 IP 清單…</p>
+            </div>
+          ) : ips.length === 0 ? (
+            <div className="py-12 text-center text-sm text-muted">
+              此 Compartment 內尚未配置保留公網 IP。
+            </div>
+          ) : (
+            <NoSsr fallback={<div className="p-8 text-center text-sm text-muted">載入中…</div>}>
+              <Table.Root>
+                <Table.ScrollContainer>
+                  <Table.Content aria-label="保留 IP 清單表格">
+                    <Table.Header>
+                      <Table.Column isRowHeader>IP 位址</Table.Column>
+                      <Table.Column>名稱</Table.Column>
+                      <Table.Column>區域</Table.Column>
+                      <Table.Column>狀態</Table.Column>
+                      <Table.Column>指派目標 (Private IP)</Table.Column>
+                      <Table.Column>建立時間</Table.Column>
+                      <Table.Column className="text-right">操作</Table.Column>
+                    </Table.Header>
+                    <Table.Body>
+                      {ips.map(row => {
                         const isAssigned = Boolean(row.assignedEntityId || row.privateIpId);
                         return (
-                          <Table.Row key={row.id}>
+                          <Table.Row id={row.id} key={row.id}>
                             <Table.Cell className="font-mono text-xs font-semibold">
                               <div className="flex items-center gap-1.5">
                                 <Globe size={13} className="text-muted" />
@@ -466,13 +462,13 @@ export default function ReservedIpsPage() {
                             </Table.Cell>
                           </Table.Row>
                         );
-                      })
-                    )}
-                  </Table.Body>
-                </Table.Content>
-              </Table.ScrollContainer>
-            </Table.Root>
-          </NoSsr>
+                      })}
+                    </Table.Body>
+                  </Table.Content>
+                </Table.ScrollContainer>
+              </Table.Root>
+            </NoSsr>
+          )}
         </Card.Content>
       </Card>
 

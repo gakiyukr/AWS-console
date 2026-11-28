@@ -11,6 +11,31 @@ import { invalidateProxyCache } from "@/server/utils/proxy.js";
 const PROTOCOLS = ["http", "https", "socks5"] as const;
 type Protocol = (typeof PROTOCOLS)[number];
 
+/** 驗證主機名稱或 IP（拒絕空白、控制字元與 URL 結構字元，防止代理 URL 注入）。 */
+function isValidProxyHost(host: string): boolean {
+  if (!host || host.length > 253) return false;
+  if (/[\s@/?#\\]/.test(host)) return false;
+  // 拒絕控制字元
+  for (let i = 0; i < host.length; i += 1) {
+    const code = host.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
+
+/** 剝除密文與 IV，僅回傳前端顯示所需的公開代理欄位。 */
+function publicProxy(proxy: Record<string, unknown>) {
+  return {
+    id: proxy.id,
+    name: proxy.name,
+    protocol: proxy.protocol,
+    host: proxy.host,
+    port: proxy.port,
+    username: typeof proxy.username === "string" ? proxy.username : "",
+    passwordHint: proxy.passwordHint ? `····${proxy.passwordHint}` : null,
+  };
+}
+
 /** 驗證並正規化代理表單；回傳欄位或錯誤訊息。 */
 function parseProxyBody(body: Record<string, unknown>): { fields?: { name: string; protocol: Protocol; host: string; port: number; username: string; password: string }; error?: string } {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
@@ -22,8 +47,8 @@ function parseProxyBody(body: Record<string, unknown>): { fields?: { name: strin
     return { error: "協定須為 http、https 或 socks5。" };
   }
   const host = typeof body?.host === "string" ? body.host.trim() : "";
-  if (!host) {
-    return { error: "請輸入代理伺服器地址（Host）。" };
+  if (!isValidProxyHost(host)) {
+    return { error: "代理伺服器地址（Host）格式無效。" };
   }
   const port = Number(body?.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -40,15 +65,7 @@ export async function GET(request: Request): Promise<Response> {
   const env = await getEnv();
   const proxies = await listProxies(env.DB);
   return jsonResponse({
-    proxies: proxies.map(proxy => ({
-      id: proxy.id,
-      name: proxy.name,
-      protocol: proxy.protocol,
-      host: proxy.host,
-      port: proxy.port,
-      username: proxy.username,
-      passwordHint: proxy.passwordHint ? `····${proxy.passwordHint}` : null,
-    })),
+    proxies: proxies.map(proxy => publicProxy(proxy)),
   });
 }
 
@@ -83,5 +100,5 @@ export async function POST(request: Request): Promise<Response> {
   });
   invalidateProxyCache();
 
-  return jsonResponse({ ok: true, proxy: { ...created, password: undefined, passwordHint: password ? `····${password.slice(-4)}` : null } }, { status: 201 });
+  return jsonResponse({ ok: true, proxy: publicProxy(created) }, { status: 201 });
 }

@@ -107,8 +107,33 @@ export async function rotateEphemeralPublicIp(ctx, { compartmentOcid, vnicId, em
 
 // ─── IPv6 開通 ──────────────────────────────────────────────
 
+/** 讀取 OCI Ipv6 資源位址欄位（官方為 ipAddress，相容舊測試的 address）。 */
+function readIpv6Address(item) {
+  return String(item?.ipAddress || item?.address || "");
+}
+
+/** 將 IPv6 /64（或前綴）正規化為 4 組 4 位小寫十六進位字串，用於無關前導零的集合比對。 */
+function normalizeIpv6PrefixKey(cidr) {
+  const [addressPart] = String(cidr || "").trim().split("/");
+  if (!addressPart) return "";
+  const hextets = expandIpv6Hextets(addressPart);
+  if (hextets.length < 4 || hextets.slice(0, 4).some(Number.isNaN)) return "";
+  return hextets.slice(0, 4).map(part => part.toString(16).padStart(4, "0")).join(":");
+}
+
+/** 將前 4 個 hextet 格式化為無前導零且符合 RFC 5952 的 /64 CIDR 字串。 */
+function formatIpv6Subnet64(hextets) {
+  const prefix = hextets.slice(0, 4);
+  let end = prefix.length;
+  while (end > 0 && prefix[end - 1] === 0) {
+    end -= 1;
+  }
+  if (end === 0) return "::/64";
+  return `${prefix.slice(0, end).map(part => part.toString(16)).join(":")}::/64`;
+}
+
 /**
- * 自 VCN /56 挑選未使用的 /64 前綴（更新 4 個 hextet 的低字節）。
+ * 自 VCN /56 挑選未使用的 /64 前綴（更新第 4 個 hextet 的低位元組）。
  * @param {string[]} vcnCidrBlocks VCN 的 ipv6CidrBlocks
  * @param {string[]} usedCidrBlocks 子網既有的 ipv6CidrBlock 清單
  * @returns {string | null} 未使用的 /64（如 2603:c023:8000:100::/64），無 /56 回 null
@@ -121,16 +146,16 @@ export function pickSubnetIpv6Cidr(vcnCidrBlocks, usedCidrBlocks) {
   const [addressPart] = vcnCidr.split("/");
   // ::/56 壓縮後 4 個 hextet 的高字節固定；展開成 4 個明確 hextet
   const hextets = expandIpv6Hextets(addressPart);
-  if (hextets.length < 4) {
+  if (hextets.length < 4 || hextets.slice(0, 4).some(Number.isNaN)) {
     return null;
   }
-  const used = new Set((usedCidrBlocks || []).map(cidr => String(cidr).replace(/\/64$/, "").toLowerCase()));
+  const used = new Set((usedCidrBlocks || []).map(normalizeIpv6PrefixKey).filter(Boolean));
   const high = hextets[3] & 0xff00;
   for (let low = 0; low <= 0xff; low += 1) {
-    const candidate = [...hextets.slice(0, 3), high | low].map(part => part.toString(16).padStart(4, "0"));
-    const candidateAddress = `${candidate.slice(0, 4).join(":")}::`;
-    if (!used.has(candidateAddress.toLowerCase())) {
-      return `${candidateAddress}/64`;
+    const candidateHextets = [hextets[0], hextets[1], hextets[2], high | low];
+    const key = candidateHextets.map(part => part.toString(16).padStart(4, "0")).join(":");
+    if (!used.has(key)) {
+      return formatIpv6Subnet64(candidateHextets);
     }
   }
   return null;
@@ -147,12 +172,6 @@ function expandIpv6Hextets(address) {
 }
 
 /**
- * 一鍵開通 IPv6（PLAN §6.3 完整序列，冪等）：
- * VCN /56 → 子網 /64 → IGW ::/0 路由 → 安全清單（§6.4 合併處理）→ VNIC 指派。
- * @param {(progress: {stage: string, message: string}) => void} [emit] SSE 進度推送
- * @returns {Promise<{ ipv6Address: string, warnings: string[] }>}
- */
-/**
  * 更換 VNIC 的 IPv6 位址：刪除現有 IPv6 物件 → 重新指派（Oracle 自子網 /64 選新址）。
  * 若 VNIC 尚無任何 IPv6（或子網／VCN 未開通 IPv6），自動走 enableInstanceIpv6
  * 完整開通流程（＝首次指派）。
@@ -164,14 +183,14 @@ export async function rotateInstanceIpv6(ctx, { compartmentOcid, vnicId, vnic, e
   const api = request(ctx);
   const warnings = [];
 
-  // 列出現有 IPv6 物件
+  // 列出現有 IPv6 物件（OCI 官方 REST 路徑為單數 /20160918/ipv6）
   emit?.({ stage: "list", message: "檢查 VNIC 現有的 IPv6 位址…" });
   const existing = await api({
     method: "GET",
     path: "/20160918/ipv6",
     query: { vnicId },
   });
-  const existingV6 = (Array.isArray(existing) ? existing : []).filter(item => item?.id && item?.address);
+  const existingV6 = (Array.isArray(existing) ? existing : []).filter(item => item?.id && readIpv6Address(item));
 
   if (existingV6.length === 0) {
     // 尚無 IPv6：視同首次開通（冪等六步流程）
@@ -185,7 +204,7 @@ export async function rotateInstanceIpv6(ctx, { compartmentOcid, vnicId, vnic, e
     };
   }
 
-  const previousIp = existingV6[0].address;
+  const previousIp = readIpv6Address(existingV6[0]);
 
   // 刪除現有 IPv6 物件（全部刪除後重新指派一個，確保拿到新位址）
   emit?.({ stage: "release", message: `釋放現有 IPv6 位址（${existingV6.length} 個）…` });
@@ -203,7 +222,7 @@ export async function rotateInstanceIpv6(ctx, { compartmentOcid, vnicId, vnic, e
     path: "/20160918/ipv6",
     body: { vnicId },
   });
-  const newIp = String(assigned?.address || "");
+  const newIp = readIpv6Address(assigned);
   if (!newIp) {
     throw new OciApiError("IPv6 重新指派失敗（OCI 未回傳位址）", 502);
   }
@@ -211,6 +230,13 @@ export async function rotateInstanceIpv6(ctx, { compartmentOcid, vnicId, vnic, e
   return { previousIp, newIp, opened: false, warnings };
 }
 
+/**
+ * 一鍵開通 IPv6（完整序列，冪等）：
+ * VCN /56 → 子網 /64 → IGW ::/0 路由 → 安全清單 → VNIC 指派。
+ * @param {{ account: object, privateKeyPem: string }} ctx
+ * @param {{ compartmentOcid: string, vnicId: string, vnic?: object, emit?: (progress: {stage: string, message: string}) => void }} options
+ * @returns {Promise<{ ipv6Address: string, warnings: string[] }>}
+ */
 export async function enableInstanceIpv6(ctx, options) {
   // emit 以預設 no-op 解構：呼叫端（路由 SSE／建機流程）可省略
   const { compartmentOcid, vnicId, vnic, emit = () => {} } = options || {};
@@ -222,7 +248,7 @@ export async function enableInstanceIpv6(ctx, options) {
     throw new OciApiError("VNIC 缺少 subnet 資訊，無法開通 IPv6", 409);
   }
 
-  // 1. VCN 有無 IPv6 prefix（無則 Oracle 自配 /56 GUA；開了就不能關）
+  // 1. VCN 有無 IPv6 prefix（無則以 AddIpv6VcnCidr 申請 Oracle GUA /56；開了就不能關）
   emit?.({ stage: "vcn", message: "檢查 VCN 的 IPv6 CIDR…" });
   const subnet = await api({ method: "GET", path: `/20160918/subnets/${encodeURIComponent(subnetId)}` });
   const vcnId = String(subnet?.vcnId || "");
@@ -233,18 +259,22 @@ export async function enableInstanceIpv6(ctx, options) {
   if (!(Array.isArray(vcn?.ipv6CidrBlocks) && vcn.ipv6CidrBlocks.length > 0)) {
     emit?.({ stage: "vcn", message: "VCN 尚無 IPv6，指派 Oracle 提供的 /56 GUA…" });
     await api({
-      method: "PUT",
-      path: `/20160918/vcns/${encodeURIComponent(vcnId)}`,
-      body: { ipv6CidrBlocks: [] },
+      method: "POST",
+      path: `/20160918/vcns/${encodeURIComponent(vcnId)}/actions/addIpv6Cidr`,
+      body: { isOracleGuaAllocationEnabled: true },
     });
     vcn = await pollVcnAvailable(api, vcnId);
     warnings.push("IPv6 於 VCN／子網層級開通後即無法關閉。");
   }
   const vcnCidrBlocks = Array.isArray(vcn?.ipv6CidrBlocks) ? vcn.ipv6CidrBlocks : [];
 
-  // 2. 子網有無 /64（無則從 VCN /56 取未用的）
+  // 2. 子網有無 /64（無則從 VCN /56 取未用的並以 AddIpv6SubnetCidr 新增）
   emit?.({ stage: "subnet", message: "檢查子網的 IPv6 CIDR…" });
-  let subnetCidr = String(subnet?.ipv6CidrBlock || "");
+  let subnetCidr = String(
+    subnet?.ipv6CidrBlock
+    || (Array.isArray(subnet?.ipv6CidrBlocks) ? subnet.ipv6CidrBlocks[0] : "")
+    || "",
+  );
   if (!subnetCidr) {
     const existingSubnets = await api({
       method: "GET",
@@ -252,7 +282,10 @@ export async function enableInstanceIpv6(ctx, options) {
       query: { compartmentId: compartmentOcid, vcnId },
     });
     const used = (Array.isArray(existingSubnets) ? existingSubnets : [])
-      .map(item => item?.ipv6CidrBlock)
+      .flatMap(item => [
+        item?.ipv6CidrBlock,
+        ...(Array.isArray(item?.ipv6CidrBlocks) ? item.ipv6CidrBlocks : []),
+      ])
       .filter(Boolean);
     const candidate = pickSubnetIpv6Cidr(vcnCidrBlocks, used);
     if (!candidate) {
@@ -260,8 +293,8 @@ export async function enableInstanceIpv6(ctx, options) {
     }
     emit?.({ stage: "subnet", message: `為子網指派 ${candidate}…` });
     await api({
-      method: "PUT",
-      path: `/20160918/subnets/${encodeURIComponent(subnetId)}`,
+      method: "POST",
+      path: `/20160918/subnets/${encodeURIComponent(subnetId)}/actions/addIpv6Cidr`,
       body: { ipv6CidrBlock: candidate },
     });
     subnetCidr = candidate;
@@ -304,10 +337,10 @@ export async function enableInstanceIpv6(ctx, options) {
     }
   }
 
-  // 5. 安全清單入站 ::/0（與 §6.4 同一呼叫合併處理）
+  // 5. 安全清單入站 ::/0（與雲層防火牆同一呼叫合併處理）
   const { securityListId } = await resolveDefaultSecurityList(api, subnet);
   if (securityListId) {
-    const firewallWarnings = await openSecurityList(ctx, { securityListId, emit });
+    const { warnings: firewallWarnings } = await openSecurityList(ctx, { securityListId, emit });
     warnings.push(...firewallWarnings);
   } else {
     warnings.push("找不到子網的安全清單，已跳過雲層防火牆設定。");
@@ -321,14 +354,14 @@ export async function enableInstanceIpv6(ctx, options) {
     query: { vnicId },
   });
   const existingV6 = Array.isArray(existingAssignments) ? existingAssignments : [];
-  let ipv6Address = existingV6.find(item => item?.address)?.address || "";
+  let ipv6Address = existingV6.map(readIpv6Address).find(Boolean) || "";
   if (!ipv6Address) {
     const assigned = await api({
       method: "POST",
       path: "/20160918/ipv6",
       body: { vnicId, ipv6SubnetCidr },
     });
-    ipv6Address = String(assigned?.address || "");
+    ipv6Address = readIpv6Address(assigned);
   } else {
     warnings.push("VNIC 已有 IPv6 位址，直接沿用。");
   }
@@ -336,11 +369,15 @@ export async function enableInstanceIpv6(ctx, options) {
   return { ipv6Address, warnings };
 }
 
-/** 輪詢 VCN 回到 AVAILABLE（UpdateVcn 為長操作）。 */
+/** 輪詢 VCN 回到 AVAILABLE 且已分配 ipv6CidrBlocks（AddIpv6VcnCidr 為非同步操作）。 */
 async function pollVcnAvailable(api, vcnId, attempts = 20) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const vcn = await api({ method: "GET", path: `/20160918/vcns/${encodeURIComponent(vcnId)}` });
-    if (String(vcn?.lifecycleState || "") === "AVAILABLE") {
+    if (
+      String(vcn?.lifecycleState || "") === "AVAILABLE"
+      && Array.isArray(vcn?.ipv6CidrBlocks)
+      && vcn.ipv6CidrBlocks.length > 0
+    ) {
       return vcn;
     }
     await new Promise(resolve => setTimeout(resolve, 3_000));
@@ -359,7 +396,7 @@ async function resolveDefaultSecurityList(api, subnet) {
 }
 
 /**
- * 一鍵開防火牆（PLAN §6.4 雲層）：Security List 全開
+ * 一鍵開防火牆（雲層）：Security List 全開
  * （TCP／UDP／ICMP，v4+v6 入站；全部協定出站）。冪等合併：已存在相同
  * 規則（同 protocol/source/destination/埠）則跳過；UpdateSecurityList 為
  * 整表覆寫語意，一律以「既有 + 新增」的合併結果送回。
@@ -398,7 +435,7 @@ export async function openSecurityList(ctx, { securityListId, emit }) {
   const added = [];
 
   for (const { source, protocol } of ingressRules) {
-    const key = `${protocol}|${source}|in`;
+    const key = ruleKey({ protocol, source });
     if (existingIngressKeys.has(key)) {
       continue;
     }
@@ -413,7 +450,7 @@ export async function openSecurityList(ctx, { securityListId, emit }) {
     added.push(`ingress ${protocol} ← ${source}`);
   }
   for (const { destination, protocol } of egressRules) {
-    const key = `${protocol}|${destination}|out`;
+    const key = ruleKey({ protocol, destination });
     if (existingEgressKeys.has(key)) {
       continue;
     }
@@ -453,8 +490,8 @@ export async function openSecurityList(ctx, { securityListId, emit }) {
 function ruleKey(rule) {
   const direction = rule?.source !== undefined ? "in" : "out";
   const endpoint = String(rule?.source ?? rule?.destination ?? "");
-  const tcp = rule?.tcpOptions?.destinationPortRange;
-  const ports = tcp ? `ports:${tcp.min ?? 0}-${tcp.max ?? 65535}` : "";
+  const portRange = rule?.tcpOptions?.destinationPortRange || rule?.udpOptions?.destinationPortRange;
+  const ports = portRange ? `ports:${portRange.min ?? 0}-${portRange.max ?? 65535}` : "";
   const icmp = rule?.icmpOptions ? `icmp:${rule.icmpOptions.type ?? "*"}:${rule.icmpOptions.code ?? "*"}` : "";
   return `${String(rule?.protocol || "")}|${endpoint}|${direction}|${ports}|${icmp}`;
 }

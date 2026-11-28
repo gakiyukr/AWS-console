@@ -104,7 +104,8 @@ export default function Ec2OverviewPage() {
         `/api/ec2/instances?account_id=${accountId}&region=${encodeURIComponent(region)}`,
       );
       if (!response.ok) throw new Error(await readError(response));
-      setInstances(await readJson<InstanceOption[]>(response));
+      const payload = await readJson<{ instances?: InstanceOption[] }>(response);
+      setInstances(Array.isArray(payload.instances) ? payload.instances : []);
     } catch {
       toastDanger("載入執行個體失敗");
     } finally {

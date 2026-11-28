@@ -2,7 +2,7 @@
 // ec2Query（SigV4 + 30 秒逾時）。純函式與 AWS 互動集中於此模組，
 // 路由檔僅負責輸入驗證與 D1 存取。
 import { ec2Query } from "./aws-query.js";
-import { parseInstanceDescription } from "./ec2-xml.js";
+import { parseInstanceDescription, parseInstanceNicInfo } from "./ec2-xml.js";
 
 // 地區查詢失敗或執行個體自回應中消失時，狀態欄位的降級顯示值；
 // 前端直接呈現，用於提醒清單資料可能過期，而非反映真實電源狀態。

@@ -18,6 +18,7 @@ import {
 import { errorResponse, readJsonBody, sseResponse, toHttpError } from "@/server/utils/http.js";
 import { isShareCaptchaEnabled, verifyCaptchaToken } from "@/server/utils/cap.js";
 import { rotateIpFailureMessage, rotatePublicIp } from "@/server/utils/power.js";
+import { rotateLightsailPublicIp } from "@/server/utils/lightsail-power.js";
 import { syncMachineDdns } from "@/server/utils/ddns.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
@@ -108,10 +109,19 @@ export async function POST(
   const cooldownUntil = cooldownMs > 0 ? now + cooldownMs : null;
   return sseResponse(async (emit) => {
     try {
-      const { newIpAddress } = await rotatePublicIp(awsEnv, machine, {
-        onProgress: (stage, details = {}) => emit("progress", { stage, ...details }),
-        waitForNewIp: true,
-      });
+      let newIpAddress: string | null = null;
+      if (machine.platform === "lightsail") {
+        const result = await rotateLightsailPublicIp(awsEnv, machine, {
+          onProgress: ({ stage, message }: { stage: string; message?: string }) =>
+            emit("progress", { stage, message }),
+        });
+        newIpAddress = result.newIp || null;
+      } else {
+        ({ newIpAddress } = await rotatePublicIp(awsEnv, machine, {
+          onProgress: (stage, details = {}) => emit("progress", { stage, ...details }),
+          waitForNewIp: true,
+        }));
+      }
       try {
         await touchShareLinkUsed(env.DB, link.id);
         await cleanupOldDailyUsage(env.DB, shareQuotaDay(Date.now()));

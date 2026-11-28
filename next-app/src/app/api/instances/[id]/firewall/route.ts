@@ -86,7 +86,10 @@ export async function POST(
 
       const result = await openSecurityList(
         { account: ctx.ociAccount, privateKeyPem: ctx.privateKeyPem },
-        { securityListId, emit },
+        {
+          securityListId,
+          emit: ({ stage, message }: { stage: string; message: string }) => emit("progress", { stage, message }),
+        },
       );
 
       const warnings = [...result.warnings];

@@ -7,6 +7,7 @@ import { getShareLinkByToken, getShareLinkDailyUsage, listMachines, shareQuotaDa
 import { errorResponse, jsonResponse } from "@/server/utils/http.js";
 import { getActiveCaptchaProviders, isShareCaptchaEnabled } from "@/server/utils/cap.js";
 import { mergeMachineStates } from "@/server/utils/power.js";
+import { mergeLightsailStates } from "@/server/utils/lightsail-power.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { getEnv } from "@/server/env";
 
@@ -35,7 +36,13 @@ export async function GET(
   await Promise.all([...groups.entries()].map(async ([accountId, accountMachines]) => {
     try {
       const { awsEnv } = await resolveAwsAccount(env, accountId);
-      for (const machine of await mergeMachineStates(awsEnv, accountMachines)) {
+      const ec2Machines = accountMachines.filter(machine => machine.platform !== "lightsail");
+      const lightsailMachines = accountMachines.filter(machine => machine.platform === "lightsail");
+      const [ec2Rows, lightsailRows] = await Promise.all([
+        ec2Machines.length > 0 ? mergeMachineStates(awsEnv, ec2Machines) : Promise.resolve([]),
+        lightsailMachines.length > 0 ? mergeLightsailStates(awsEnv, lightsailMachines) : Promise.resolve([]),
+      ]);
+      for (const machine of [...ec2Rows, ...lightsailRows]) {
         rows.set(machine.id, machine);
       }
     } catch {

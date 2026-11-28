@@ -68,7 +68,11 @@ export async function POST(
     try {
       const result = await rotateEphemeralPublicIp(
         { account: ctx.ociAccount, privateKeyPem: ctx.privateKeyPem },
-        { compartmentOcid: ctx.ociAccount.compartmentOcid, vnicId, emit },
+        {
+          compartmentOcid: ctx.ociAccount.compartmentOcid,
+          vnicId,
+          emit: ({ stage, message }: { stage: string; message: string }) => emit("progress", { stage, message }),
+        },
       );
       emit("progress", { stage: "done", message: `新公網 IP：${result.newIp}` });
       emit("result", {

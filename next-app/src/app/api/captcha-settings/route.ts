@@ -14,11 +14,25 @@ import { appendOperationLog, getAppSetting } from "@/server/utils/db.js";
 import { getEnv } from "@/server/env";
 import { requireApiSession } from "@/server/api-guard";
 
+/** 剝除明文私鑰，確保 secret 絕不出伺服器。 */
+function publicCaptchaProvider(item: Record<string, unknown>) {
+  return {
+    provider: item.provider,
+    name: item.name,
+    enabled: Boolean(item.enabled),
+    configured: Boolean(item.configured),
+    source: item.source ?? null,
+    endpoint: item.endpoint ?? "",
+    siteKey: item.siteKey ?? "",
+    secretHint: item.secretHint ?? null,
+  };
+}
+
 export async function GET(request: Request): Promise<Response> {
   const denied = await requireApiSession(request);
   if (denied) return denied;
   const env = await getEnv();
-  const providers = await getAllCaptchaProviders(env);
+  const providers = (await getAllCaptchaProviders(env)).map(publicCaptchaProvider);
   const globalEnabled = (await getAppSetting(env.DB, SHARE_CAPTCHA_ENABLED_KEY)) === "1";
 
   // cap 渠道相容舊格式欄位
@@ -99,7 +113,7 @@ export async function PUT(request: Request): Promise<Response> {
     // 日誌寫入失敗不影響結果
   }
 
-  const updatedProviders = await getAllCaptchaProviders(env);
+  const updatedProviders = (await getAllCaptchaProviders(env)).map(publicCaptchaProvider);
   return jsonResponse({
     ok: true,
     providers: updatedProviders,
@@ -125,5 +139,6 @@ export async function DELETE(request: Request): Promise<Response> {
   } catch {
     // 日誌寫入失敗不影響結果
   }
-  return jsonResponse({ ok: true, deleted, providers: await getAllCaptchaProviders(env) });
+  const providers = (await getAllCaptchaProviders(env)).map(publicCaptchaProvider);
+  return jsonResponse({ ok: true, deleted, providers });
 }

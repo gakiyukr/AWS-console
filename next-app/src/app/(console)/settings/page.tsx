@@ -371,7 +371,7 @@ export default function SettingsPage() {
       protocol: item.protocol,
       host: item.host,
       port: item.port,
-      username: item.username,
+      username: item.username ?? "",
       password: "",
     });
     setProxyTestResult(null);
@@ -403,8 +403,8 @@ export default function SettingsPage() {
           password: proxyForm.password,
         }),
       });
-      const payload = await readJson<{ message?: string }>(response);
       if (!response.ok) throw new Error(await readError(response));
+      const payload = await readJson<{ message?: string }>(response);
       toast.success(payload.message || (editingProxyId ? "代理已更新" : "代理已新增"));
       setProxyFormOpen(false);
       await loadProxies();
@@ -426,17 +426,17 @@ export default function SettingsPage() {
       if (Number.isNaN(portNum) || portNum < 1 || portNum > 65535) {
         throw new Error("代理端口必須介於 1 到 65535 之間");
       }
-      // 編輯已存代理且密碼留空時，由伺服端取原密碼測試；其餘用表單值
+      // 編輯已存代理且密碼留空時，由伺服端取原密碼並帶入當前表單欄位測試；其餘直接用表單值
       const useStored = editingProxyId !== null && !proxyForm.password;
       const response = await fetch(useStored ? `/api/proxies/${editingProxyId}/test` : "/api/proxies/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(useStored ? {} : {
+        body: JSON.stringify({
           protocol: proxyForm.protocol,
           host: proxyForm.host.trim(),
           port: portNum,
-          username: proxyForm.username.trim(),
-          password: proxyForm.password,
+          username: (proxyForm.username ?? "").trim(),
+          ...(useStored ? {} : { password: proxyForm.password }),
         }),
       });
       const data = await readJson<ProxyTestResult>(response);

@@ -477,10 +477,13 @@ export default function LightsailPage() {
                     value: key.id,
                     label: `${key.label} (${sshKeyTypeLabel(key.publicKey)})`,
                   }))}
-                  onChange={val => setForm(previous => ({
-                    ...previous,
-                    sshKeyId: typeof val === "number" ? val : null,
-                  }))}
+                  onChange={val => {
+                    const parsed = Number(val);
+                    setForm(previous => ({
+                      ...previous,
+                      sshKeyId: Number.isInteger(parsed) && parsed > 0 ? parsed : null,
+                    }));
+                  }}
                   disabled={loadingKeys || busy}
                 />
                 <p className="text-xs text-muted">

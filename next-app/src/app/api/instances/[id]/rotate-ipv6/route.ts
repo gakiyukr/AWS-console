@@ -70,7 +70,12 @@ export async function POST(
     try {
       const result = await rotateInstanceIpv6(
         { account: ctx.ociAccount, privateKeyPem: ctx.privateKeyPem },
-        { compartmentOcid: ctx.ociAccount.compartmentOcid, vnicId, vnic, emit },
+        {
+          compartmentOcid: ctx.ociAccount.compartmentOcid,
+          vnicId,
+          vnic,
+          emit: ({ stage, message }: { stage: string; message: string }) => emit("progress", { stage, message }),
+        },
       );
       emit("progress", { stage: "done", message: `新 IPv6 位址：${result.newIp}` });
       emit("result", {

@@ -52,7 +52,7 @@ export async function instanceAction(ctx, instanceId, action) {
     privateKeyPem: ctx.privateKeyPem,
     method: "POST",
     path: `/20160918/instances/${encodeURIComponent(instanceId)}`,
-    body: { action },
+    query: { action },
   });
 }
 

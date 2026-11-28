@@ -3,11 +3,11 @@
 //      指派後重開機一次讓客體 OS 抓到位址（reboot 不會更換 IPv4 公網 IP）。
 // Lightsail：SetIpAddressType dualstack（免重開）。
 // Wavelength Zone 不支援 IPv6，於入口直接拒絕。
-// 平台辨別：D1 沒有平台欄位，先以 EC2 DescribeInstances 查詢，
-// 找不到再試 Lightsail GetInstance。
+// 平台辨別：優先依 D1 machine.platform 分流；未標註的舊紀錄才依序探測 EC2 與 Lightsail。
 import { errorResponse, jsonResponse, toHttpError } from "@/server/utils/http.js";
 import { appendOperationLog, getMachineById } from "@/server/utils/db.js";
 import { ec2Query } from "@/server/utils/aws-query.js";
+import { AwsRequestError } from "@/server/utils/aws-lightsail.js";
 import { parseInstanceNicInfo } from "@/server/utils/ec2-xml.js";
 import { enableEc2InstanceIpv6, enableLightsailIpv6 } from "@/server/utils/ipv6.js";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
@@ -75,19 +75,26 @@ export async function POST(
   try {
     ({ awsEnv } = await resolveAwsAccount(env, machine.awsAccountId));
 
-    // 平台辨別：EC2 先查，找不到再試 Lightsail
-    let platform: "ec2" | "lightsail" | null = null;
-    try {
-      const nic = parseInstanceNicInfo(
-        await ec2Query(machine.region, awsEnv, "DescribeInstances", {
-          "InstanceId.1": machine.instanceId,
-        }),
-      );
-      if (nic.instanceId) {
-        platform = "ec2";
+    // 平台分流：優先使用 D1 記錄的 platform；未標註時才探測 EC2 → Lightsail
+    let platform: "ec2" | "lightsail" | null = machine.platform === "lightsail"
+      ? "lightsail"
+      : machine.platform === "ec2"
+        ? "ec2"
+        : null;
+
+    if (!platform) {
+      try {
+        const nic = parseInstanceNicInfo(
+          await ec2Query(machine.region, awsEnv, "DescribeInstances", {
+            "InstanceId.1": machine.instanceId,
+          }),
+        );
+        if (nic.instanceId) {
+          platform = "ec2";
+        }
+      } catch {
+        // EC2 查無此執行個體時改試 Lightsail
       }
-    } catch {
-      // EC2 查無此執行個體時改試 Lightsail
     }
 
     if (platform === "ec2") {
@@ -106,9 +113,17 @@ export async function POST(
     } else {
       try {
         const result = await enableLightsailIpv6(awsEnv, machine.region, machine.instanceId);
+        platform = "lightsail";
         ipv6Address = result.ipv6Address;
-      } catch {
-        platform = null;
+      } catch (lightsailError) {
+        // 僅在明確找不到執行個體時降級為 404；IAM 權限、逾時與其他 API 錯誤直接拋出讓呼叫端得知真因
+        const isNotFound = (lightsailError instanceof AwsRequestError && lightsailError.code === "NotFoundException")
+          || (lightsailError instanceof Error && lightsailError.message === "找不到執行個體");
+        if (isNotFound) {
+          platform = null;
+        } else {
+          throw lightsailError;
+        }
       }
     }
 

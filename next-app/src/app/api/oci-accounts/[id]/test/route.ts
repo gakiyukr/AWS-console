@@ -19,6 +19,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     await ociRequestJson({
       account: ociAccount,
       privateKeyPem,
+      service: "identity",
       method: "GET",
       path: "/20160918/regions",
     });

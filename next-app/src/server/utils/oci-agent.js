@@ -1,7 +1,7 @@
 // OCI Instance Agent（Run Command）呼叫：主機層指令執行與 iptables 自動化清理。
 // 依據 OCI Compute Instance Agent API（version 20180530）實作：
 // - CreateInstanceAgentCommand: POST /20180530/instanceAgentCommands
-// - GetInstanceAgentCommandExecution: GET /20180530/instanceAgentCommands/{commandId}/instances/{instanceId}
+// - GetInstanceAgentCommandExecution: GET /20180530/instanceAgentCommands/{instanceAgentCommandId}/status?instanceId={instanceId}
 // 所有請求經 oci-request.js 簽章；長操作支援 emit 進度回報與輪詢。
 import { ociRequestJson } from "./oci-request.js";
 import { OciApiError } from "./oci-error.js";
@@ -160,7 +160,8 @@ export async function getInstanceAgentCommandExecution(ctx, { commandId, instanc
   const api = request(ctx);
   return api({
     method: "GET",
-    path: `/20180530/instanceAgentCommands/${encodeURIComponent(commandId)}/instances/${encodeURIComponent(instanceId)}`,
+    path: `/20180530/instanceAgentCommands/${encodeURIComponent(commandId)}/status`,
+    query: { instanceId },
   });
 }
 
@@ -193,22 +194,28 @@ export async function pollCommandExecution(ctx, {
     const lifecycleState = String(execution?.lifecycleState || "").toUpperCase();
     const deliveryState = String(execution?.deliveryState || "").toUpperCase();
 
+    // OCI InstanceAgentCommandExecution 的 exitCode／text／message 均位於 execution.content 內
+    const content = execution?.content;
+    const outputText = content?.text || content?.message || execution?.message || "";
+    const exitCode = typeof content?.exitCode === "number"
+      ? content.exitCode
+      : (typeof execution?.exitCode === "number" ? execution.exitCode : 0);
+
     if (lifecycleState === "SUCCEEDED") {
-      const exitCode = typeof execution?.exitCode === "number" ? execution.exitCode : 0;
       if (exitCode === 0) {
         return {
           ok: true,
           lifecycleState,
           deliveryState,
           exitCode,
-          output: execution?.content?.text || execution?.message || "指令執行成功",
+          output: outputText || "指令執行成功",
         };
       }
-      throw new OciApiError(`主機端腳本執行失敗（離開代碼：${exitCode}）：${execution?.content?.text || execution?.message || ""}`, 500);
+      throw new OciApiError(`主機端腳本執行失敗（離開代碼：${exitCode}）：${outputText}`, 500);
     }
 
     if (lifecycleState === "FAILED") {
-      throw new OciApiError(`Cloud Agent 執行失敗：${execution?.message || execution?.content?.text || "未知原因"}`, 500);
+      throw new OciApiError(`Cloud Agent 執行失敗：${outputText || "未知原因"}`, 500);
     }
 
     if (lifecycleState === "TIMED_OUT") {

@@ -1,19 +1,39 @@
 // PUT /api/proxies/:id：更新代理（密碼留空即保留原值）。
 // DELETE /api/proxies/:id：刪除代理；綁定此代理的帳號會因 FK
 //   （ON DELETE SET NULL）自動回到直連。
-// POST /api/proxies/:id/test：透過此代理實測出口 IP 與延遲。
 import { requireApiSession } from "@/server/api-guard";
 import { getEnv } from "@/server/env";
 import { errorResponse, jsonResponse, readJsonBody } from "@/server/utils/http.js";
 import { deleteProxy, getProxyById, updateProxy } from "@/server/utils/db.js";
-import {
-  encryptProxyPassword,
-  decryptProxyPassword,
-} from "@/server/utils/credential-crypto.js";
-import { invalidateProxyCache, testProxyConnection } from "@/server/utils/proxy.js";
+import { encryptProxyPassword } from "@/server/utils/credential-crypto.js";
+import { invalidateProxyCache } from "@/server/utils/proxy.js";
 
 const PROTOCOLS = ["http", "https", "socks5"] as const;
 type Protocol = (typeof PROTOCOLS)[number];
+
+/** 驗證主機名稱或 IP（拒絕空白、控制字元與 URL 結構字元，防止代理 URL 注入）。 */
+function isValidProxyHost(host: string): boolean {
+  if (!host || host.length > 253) return false;
+  if (/[\s@/?#\\]/.test(host)) return false;
+  for (let i = 0; i < host.length; i += 1) {
+    const code = host.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
+
+/** 剝除密文與 IV，僅回傳前端顯示所需的公開代理欄位。 */
+function publicProxy(proxy: Record<string, unknown>) {
+  return {
+    id: proxy.id,
+    name: proxy.name,
+    protocol: proxy.protocol,
+    host: proxy.host,
+    port: proxy.port,
+    username: typeof proxy.username === "string" ? proxy.username : "",
+    passwordHint: proxy.passwordHint ? `····${proxy.passwordHint}` : null,
+  };
+}
 
 export async function PUT(
   request: Request,
@@ -46,8 +66,8 @@ export async function PUT(
     return errorResponse(400, "協定須為 http、https 或 socks5。");
   }
   const host = typeof body?.host === "string" ? body.host.trim() : "";
-  if (!host) {
-    return errorResponse(400, "請輸入代理伺服器地址（Host）。");
+  if (!isValidProxyHost(host)) {
+    return errorResponse(400, "代理伺服器地址（Host）格式無效。");
   }
   const port = Number(body?.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -81,7 +101,7 @@ export async function PUT(
   if (!updated) {
     return errorResponse(404, "找不到指定的代理。");
   }
-  return jsonResponse({ ok: true, proxy: { ...updated, password: undefined } });
+  return jsonResponse({ ok: true, proxy: publicProxy(updated) });
 }
 
 export async function DELETE(
@@ -100,46 +120,4 @@ export async function DELETE(
   const deleted = await deleteProxy(env.DB, id);
   invalidateProxyCache(id);
   return jsonResponse({ ok: true, deleted });
-}
-
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-): Promise<Response> {
-  const denied = await requireApiSession(request);
-  if (denied) return denied;
-  const env = await getEnv();
-
-  const { id: rawId } = await params;
-  const id = Number(rawId);
-  if (!Number.isInteger(id) || id <= 0) {
-    return errorResponse(400, "代理 ID 無效。");
-  }
-  const row = await getProxyById(env.DB, id);
-  if (!row) {
-    return errorResponse(404, "找不到指定的代理。");
-  }
-
-  let password = "";
-  if (row.passwordCiphertext && row.passwordIv && env.CREDENTIAL_ENCRYPTION_KEY) {
-    try {
-      password = await decryptProxyPassword(
-        { clientSecretCiphertext: row.passwordCiphertext, clientSecretIv: row.passwordIv },
-        env.CREDENTIAL_ENCRYPTION_KEY,
-      );
-    } catch (error) {
-      return errorResponse(500, `代理密碼解密失敗：${error instanceof Error ? error.message : error}`);
-    }
-  }
-
-  const result = await testProxyConnection({
-    id: row.id,
-    name: row.name,
-    protocol: row.protocol,
-    host: row.host,
-    port: row.port,
-    username: row.username,
-    password,
-  });
-  return jsonResponse(result, { status: result.ok ? 200 : 502 });
 }

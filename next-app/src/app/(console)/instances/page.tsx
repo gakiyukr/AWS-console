@@ -14,7 +14,6 @@ import {
   PowerOff,
   RefreshCw,
   RotateCcw,
-  Share2,
   ShieldCheck,
   Tag,
   Terminal,
@@ -122,15 +121,6 @@ export default function InstancesPage() {
   const [aliasValue, setAliasValue] = useState("");
   const [notesValue, setNotesValue] = useState("");
   const [savingAlias, setSavingAlias] = useState(false);
-
-  // 分享連結對話框狀態
-  const [sharingInstance, setSharingInstance] = useState<InstanceRow | null>(null);
-  const [shareAction, setShareAction] = useState("start");
-  const [shareDuration, setShareDuration] = useState("24");
-  const [shareMaxUses, setShareMaxUses] = useState("0");
-  const [shareNote, setShareNote] = useState("");
-  const [creatingShare, setCreatingShare] = useState(false);
-  const [createdShareUrl, setCreatedShareUrl] = useState<string | null>(null);
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -389,35 +379,6 @@ export default function InstancesPage() {
     }
   }
 
-  // 建立分享連結（Phase 2）
-  async function submitCreateShare() {
-    if (!sharingInstance) return;
-    setCreatingShare(true);
-    try {
-      const response = await fetch("/api/share-links", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instanceId: sharingInstance.id,
-          action: shareAction,
-          ociAccountId: Number(accountId),
-          durationHours: Number(shareDuration),
-          maxUses: Number(shareMaxUses),
-          note: shareNote,
-        }),
-      });
-      if (!response.ok) throw new Error(await readError(response));
-      const payload = await readJson<{ link: { id: string } }>(response);
-      const url = `${window.location.origin}/share/${payload.link.id}`;
-      setCreatedShareUrl(url);
-      toast.success("分享連結已成功產生");
-    } catch (error) {
-      toastDanger(error instanceof Error ? error.message : "建立分享連結失敗");
-    } finally {
-      setCreatingShare(false);
-    }
-  }
-
   const runningCount = instances.filter(row => row.lifecycleState === "RUNNING").length;
   const stoppedCount = instances.filter(row => row.lifecycleState === "STOPPED").length;
 
@@ -671,22 +632,6 @@ export default function InstancesPage() {
                                     <Button
                                       size="sm"
                                       variant="ghost"
-                                      aria-label="建立分享連結"
-                                      isDisabled={busy}
-                                      onPress={() => {
-                                        setSharingInstance(row);
-                                        setShareAction("start");
-                                        setShareDuration("24");
-                                        setShareMaxUses("0");
-                                        setShareNote("");
-                                        setCreatedShareUrl(null);
-                                      }}
-                                    >
-                                      <Share2 aria-hidden size={14} />
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
                                       className="text-danger"
                                       aria-label="終止執行個體"
                                       isDisabled={busy || row.lifecycleState === "TERMINATED" || row.lifecycleState === "TERMINATING"}
@@ -834,99 +779,6 @@ export default function InstancesPage() {
               className="mt-1"
             />
           </div>
-        </div>
-      </ConfirmDialog>
-
-      {/* 建立分享連結對話框（Phase 2） */}
-      <ConfirmDialog
-        open={sharingInstance !== null}
-        onOpenChange={open => { if (!open) setSharingInstance(null); }}
-        title={`建立分享連結：${sharingInstance?.displayName || ""}`}
-        confirmLabel={createdShareUrl ? "完成" : "產生連結"}
-        pending={creatingShare}
-        onConfirm={createdShareUrl ? async () => setSharingInstance(null) : submitCreateShare}
-      >
-        <div className="grid gap-3 text-sm">
-          {createdShareUrl ? (
-            <div className="grid gap-2">
-              <p className="text-xs text-success font-semibold">分享連結已建立成功！</p>
-              <div className="flex items-center gap-2 rounded-md border border-divider bg-surface-secondary/50 p-2 font-mono text-xs">
-                <span className="truncate flex-1">{createdShareUrl}</span>
-                <Button size="sm" variant="ghost" isIconOnly onPress={() => copyText(createdShareUrl)}>
-                  <Copy size={13} />
-                </Button>
-              </div>
-              <p className="text-[11px] text-muted">
-                獲得此連結的任何人皆可在授權限制內執行指定操作，無需登入主控台。
-              </p>
-            </div>
-          ) : (
-            <>
-              <div>
-                <label htmlFor="share-action-select" className="text-xs font-medium">授權操作動作</label>
-                <div className="mt-1">
-                  <CustomSelect
-                    id="share-action-select"
-                    value={shareAction}
-                    options={[
-                      { value: "start", label: "開機 (START)" },
-                      { value: "stop", label: "關機 (SOFTSTOP)" },
-                      { value: "force-stop", label: "強制斷電 (STOP)" },
-                      { value: "reboot", label: "重啟 (SOFTRESET)" },
-                      { value: "reboot-ip", label: "更換公網 IP (rotate-ip)" },
-                      { value: "firewall", label: "一鍵開防火牆 (firewall)" },
-                    ]}
-                    onChange={setShareAction}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label htmlFor="share-duration-select" className="text-xs font-medium">有效期限</label>
-                  <div className="mt-1">
-                    <CustomSelect
-                      id="share-duration-select"
-                      value={shareDuration}
-                      options={[
-                        { value: "1", label: "1 小時" },
-                        { value: "6", label: "6 小時" },
-                        { value: "24", label: "24 小時（1 天）" },
-                        { value: "72", label: "72 小時（3 天）" },
-                        { value: "168", label: "7 天" },
-                      ]}
-                      onChange={setShareDuration}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label htmlFor="share-max-uses-select" className="text-xs font-medium">次數上限</label>
-                  <div className="mt-1">
-                    <CustomSelect
-                      id="share-max-uses-select"
-                      value={shareMaxUses}
-                      options={[
-                        { value: "0", label: "無限制" },
-                        { value: "1", label: "僅限 1 次" },
-                        { value: "3", label: "最多 3 次" },
-                        { value: "5", label: "最多 5 次" },
-                      ]}
-                      onChange={setShareMaxUses}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label htmlFor="share-note-input" className="text-xs font-medium">連結備註（選填）</label>
-                <Input
-                  id="share-note-input"
-                  placeholder="例：提供給測試同仁開機使用"
-                  value={shareNote}
-                  onChange={event => setShareNote(event.target.value)}
-                  className="mt-1"
-                />
-              </div>
-            </>
-          )}
         </div>
       </ConfirmDialog>
     </div>

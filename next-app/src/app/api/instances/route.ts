@@ -55,10 +55,11 @@ export async function GET(request: Request): Promise<Response> {
   const database = env.DB as D1Database;
 
   try {
-    // 先解析帳號取得 id（也可驗證憑證設定）；不觸發任何 OCI API。
+    // 先解析帳號取得 id（同時驗證憑證設定與 regionParam 形狀，防 SSRF）；不觸發任何 OCI API。
     const { account, ociAccount: defaultOciAccount, privateKeyPem } = await resolveOciAccount(
       env,
       accountId || undefined,
+      { region: regionParam || undefined },
     );
     const resolvedAccountId = Number(account.id);
     const aliasMap = await getAllInstanceAliases(database) as Record<string, { alias: string, notes: string }>;
@@ -212,9 +213,16 @@ async function enrichInstance(
     );
     if (vnicInfo) {
       base.publicIp = vnicInfo.vnic?.publicIp ? String(vnicInfo.vnic.publicIp) : null;
-      const v6: Array<{ address?: string }> = Array.isArray(vnicInfo.vnic?.ipv6Addresses) ? vnicInfo.vnic.ipv6Addresses : [];
-      const firstV6 = v6.find(item => item?.address);
-      base.ipv6Address = firstV6 ? String(firstV6.address) : null;
+      // OCI GetVnic 的 ipv6Addresses 依官方規格為 string[]，同時相容物件形式兜底
+      const v6List: unknown[] = Array.isArray(vnicInfo.vnic?.ipv6Addresses) ? vnicInfo.vnic.ipv6Addresses : [];
+      const firstV6 = v6List
+        .map(item => (typeof item === "string"
+          ? item.trim()
+          : String((item as { ipAddress?: string; address?: string } | null)?.ipAddress
+            || (item as { ipAddress?: string; address?: string } | null)?.address
+            || "").trim()))
+        .find(Boolean);
+      base.ipv6Address = firstV6 || null;
     }
   } catch {
     // IP 資訊取得失敗不中斷清單

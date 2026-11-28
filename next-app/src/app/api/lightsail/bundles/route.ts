@@ -4,6 +4,7 @@ import { getEnv } from "@/server/env";
 import { resolveAwsAccount } from "@/server/utils/aws-account.js";
 import { listLightsailBundles } from "@/server/utils/lightsail-deploy.js";
 import { errorResponse, jsonResponse, toHttpError } from "@/server/utils/http.js";
+import { validateInput } from "@/server/utils/validate.js";
 
 export async function GET(request: Request) {
   const denied = await requireApiSession(request);
@@ -12,10 +13,14 @@ export async function GET(request: Request) {
   const env = await getEnv();
   const url = new URL(request.url);
   const accountId = url.searchParams.get("account_id");
-  const region = url.searchParams.get("region");
+  const region = String(url.searchParams.get("region") ?? "");
 
   if (!accountId || !region) {
     return errorResponse(400, "缺少 account_id 或 region 參數。");
+  }
+  const regionValidation = validateInput(region, "region", "地區");
+  if (!regionValidation.valid) {
+    return errorResponse(400, regionValidation.error);
   }
 
   let accountContext;
